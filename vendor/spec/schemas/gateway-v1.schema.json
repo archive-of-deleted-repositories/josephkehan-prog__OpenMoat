@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openmoat.dev/schema/gateway-v1.schema.json",
+  "title": "OpenMoat Gateway v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["callers", "servers"],
+  "properties": {
+    "callers": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/caller"}
+    },
+    "servers": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/server"}
+    }
+  },
+  "$defs": {
+    "patternList": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "default": []
+    },
+    "caller": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {"$ref": "#/$defs/patternList"},
+        "deny": {"$ref": "#/$defs/patternList"}
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "failureThreshold": {"type": "integer", "minimum": 1, "default": 3},
+        "resetAfterMs": {"type": "integer", "minimum": 1, "default": 60000},
+        "maxConcurrentCalls": {"type": "integer", "minimum": 1, "default": 8}
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {"type": "string", "minLength": 1},
+        "args": {"type": "array", "items": {"type": "string"}, "default": []},
+        "env": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "default": {}
+        },
+        "cwd": {"type": "string", "minLength": 1},
+        "trust": {
+          "type": "string",
+          "enum": ["trusted", "quarantined", "disabled"],
+          "default": "quarantined"
+        },
+        "startupTimeoutMs": {"type": "integer", "minimum": 1, "default": 10000},
+        "callTimeoutMs": {"type": "integer", "minimum": 1, "default": 30000},
+        "limits": {"$ref": "#/$defs/limits"}
+      }
+    }
+  }
+}

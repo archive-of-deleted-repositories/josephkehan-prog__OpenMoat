@@ -1,0 +1,1 @@
+{"version":1,"id":"validate-valid","operation":"validate","input":{"fixture":"fixtures/valid/minimal.yaml"},"expected":{"ok":true}}

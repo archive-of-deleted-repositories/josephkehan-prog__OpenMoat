@@ -1,0 +1,8 @@
+apiVersion: openmoat.dev/v2
+kind: Moatfile
+features: {}
+targets: {}
+gateway:
+  callers: {}
+  servers: {}
+

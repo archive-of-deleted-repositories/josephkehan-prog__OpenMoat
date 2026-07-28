@@ -1,0 +1,201 @@
+/**
+ * Circuit breakers + health scoring for gateway children (OmniRoute's layered
+ * breaker model, hub edition): server-scope breaker on spawn/connect failures,
+ * tool-scope lockout on repeated call errors. Lazy half-open recovery — no
+ * background timers; after the cooldown the next call is the probe.
+ * Persisted in SQLite so every hub process (one per harness) shares state.
+ */
+
+import path from "node:path";
+import type { DatabaseSync } from "node:sqlite";
+import type { HubConfig } from "./config.js";
+import { openStateDb } from "./db.js";
+
+const THRESHOLD: Record<string, number> = { server: 3, tool: 4 };
+const COOLDOWN_MS: Record<string, number> = { server: 10 * 60_000, tool: 5 * 60_000 };
+
+export interface BreakerState {
+  open: boolean;
+  retryInMs: number;
+  reason: string;
+}
+
+export class Health {
+  private db: DatabaseSync;
+
+  constructor(cfg: HubConfig) {
+    this.db = openStateDb(path.join(cfg.stateDir, "health.db"), `
+      CREATE TABLE IF NOT EXISTS breakers (
+        scope TEXT NOT NULL, key TEXT NOT NULL, failures INTEGER NOT NULL DEFAULT 0,
+        last_at INTEGER NOT NULL, last_error TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (scope, key)
+      );
+      CREATE TABLE IF NOT EXISTS stats (
+        server TEXT NOT NULL, tool TEXT NOT NULL,
+        calls INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+        total_ms INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (server, tool)
+      );
+      CREATE TABLE IF NOT EXISTS agent_calls (
+        agent TEXT NOT NULL, server TEXT NOT NULL, tool TEXT NOT NULL,
+        calls INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0,
+        total_ms INTEGER NOT NULL DEFAULT 0, last_at INTEGER NOT NULL,
+        PRIMARY KEY (agent, server, tool)
+      );
+    `);
+  }
+
+  failure(scope: "server" | "tool", key: string, error: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO breakers(scope, key, failures, last_at, last_error) VALUES(?,?,1,?,?)
+         ON CONFLICT(scope, key) DO UPDATE SET failures = failures + 1, last_at = excluded.last_at, last_error = excluded.last_error`
+      )
+      .run(scope, key, Date.now(), error.slice(0, 200));
+  }
+
+  success(scope: "server" | "tool", key: string): void {
+    this.db.prepare("DELETE FROM breakers WHERE scope = ? AND key = ?").run(scope, key);
+  }
+
+  check(scope: "server" | "tool", key: string): BreakerState {
+    const row = this.db
+      .prepare("SELECT failures, last_at, last_error FROM breakers WHERE scope = ? AND key = ?")
+      .get(scope, key) as unknown as { failures: number; last_at: number; last_error: string } | undefined;
+    if (!row || row.failures < THRESHOLD[scope]) return { open: false, retryInMs: 0, reason: "" };
+    const elapsed = Date.now() - row.last_at;
+    if (elapsed >= COOLDOWN_MS[scope]) return { open: false, retryInMs: 0, reason: row.last_error }; // half-open probe
+    return { open: true, retryInMs: COOLDOWN_MS[scope] - elapsed, reason: row.last_error };
+  }
+
+  /** Servers whose breaker is currently open (for tool_search demotion). */
+  openServers(): Set<string> {
+    const rows = this.db
+      .prepare("SELECT key, failures, last_at FROM breakers WHERE scope = 'server'")
+      .all() as unknown as { key: string; failures: number; last_at: number }[];
+    const now = Date.now();
+    return new Set(
+      rows
+        .filter((r) => r.failures >= THRESHOLD.server && now - r.last_at < COOLDOWN_MS.server)
+        .map((r) => r.key)
+    );
+  }
+
+  recordCall(server: string, tool: string, ms: number, isError: boolean): void {
+    this.db
+      .prepare(
+        `INSERT INTO stats(server, tool, calls, errors, total_ms) VALUES(?,?,1,?,?)
+         ON CONFLICT(server, tool) DO UPDATE SET calls = calls + 1, errors = errors + excluded.errors, total_ms = total_ms + excluded.total_ms`
+      )
+      .run(server, tool, isError ? 1 : 0, Math.round(ms));
+  }
+
+  /** Per-agent attribution: which agent (harness) called which tool. */
+  recordAgentCall(agent: string, server: string, tool: string, ms: number, isError: boolean): void {
+    this.db
+      .prepare(
+        `INSERT INTO agent_calls(agent, server, tool, calls, errors, total_ms, last_at) VALUES(?,?,?,1,?,?,?)
+         ON CONFLICT(agent, server, tool) DO UPDATE SET
+           calls = calls + 1, errors = errors + excluded.errors,
+           total_ms = total_ms + excluded.total_ms, last_at = excluded.last_at`
+      )
+      .run(agent, server, tool, isError ? 1 : 0, Math.round(ms), Date.now());
+  }
+
+  /** Tracker report: which agent called which tool, volume/errors/latency/recency. */
+  usageReport(opts: { agent?: string; server?: string; sinceMs?: number } = {}): string {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (opts.agent) {
+      where.push("agent = ?");
+      params.push(opts.agent);
+    }
+    if (opts.server) {
+      where.push("server = ?");
+      params.push(opts.server);
+    }
+    if (opts.sinceMs) {
+      where.push("last_at >= ?");
+      params.push(Date.now() - opts.sinceMs);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT agent, server, tool, calls, errors, total_ms, last_at FROM agent_calls
+         ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY agent, calls DESC`
+      )
+      .all(...params) as unknown as {
+      agent: string;
+      server: string;
+      tool: string;
+      calls: number;
+      errors: number;
+      total_ms: number;
+      last_at: number;
+    }[];
+    if (!rows.length) return "No tracked calls match. (Tracking starts when agents call tools through a hub built with agent_calls support.)";
+
+    const ago = (ts: number) => {
+      const m = Math.round((Date.now() - ts) / 60_000);
+      if (m < 1) return "just now";
+      if (m < 60) return `${m}m ago`;
+      const h = Math.round(m / 60);
+      return h < 48 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+    };
+    const lines: string[] = [];
+    let current = "";
+    for (const r of rows) {
+      if (r.agent !== current) {
+        current = r.agent;
+        const agentRows = rows.filter((x) => x.agent === current);
+        const calls = agentRows.reduce((n, x) => n + x.calls, 0);
+        const errors = agentRows.reduce((n, x) => n + x.errors, 0);
+        lines.push(`${lines.length ? "\n" : ""}AGENT ${current} — ${calls} call(s), ${errors} error(s):`);
+      }
+      const avg = r.calls ? Math.round(r.total_ms / r.calls) : 0;
+      const errPct = r.calls ? Math.round((r.errors / r.calls) * 100) : 0;
+      lines.push(`  ${r.server} › ${r.tool}: ${r.calls} call(s), ${errPct}% errors, ~${avg}ms avg, last ${ago(r.last_at)}`);
+    }
+    return lines.join("\n");
+  }
+
+  report(): string {
+    const stats = this.db
+      .prepare("SELECT server, tool, calls, errors, total_ms FROM stats ORDER BY calls DESC LIMIT 30")
+      .all() as unknown as { server: string; tool: string; calls: number; errors: number; total_ms: number }[];
+    const breakers = this.db
+      .prepare("SELECT scope, key, failures, last_at, last_error FROM breakers ORDER BY last_at DESC")
+      .all() as unknown as { scope: string; key: string; failures: number; last_at: number; last_error: string }[];
+    const now = Date.now();
+    const lines: string[] = [];
+    if (breakers.length) {
+      lines.push("BREAKERS:");
+      for (const b of breakers) {
+        const open = b.failures >= THRESHOLD[b.scope] && now - b.last_at < COOLDOWN_MS[b.scope];
+        lines.push(
+          `  [${open ? "OPEN" : "watching"}] ${b.scope} ${b.key} — ${b.failures} consecutive failure(s); last: ${b.last_error.slice(0, 80)}`
+        );
+      }
+    } else {
+      lines.push("BREAKERS: none — all assets healthy");
+    }
+    if (stats.length) {
+      lines.push("", "CALL STATS (top 30):");
+      for (const s of stats) {
+        const avg = s.calls ? Math.round(s.total_ms / s.calls) : 0;
+        const errPct = s.calls ? Math.round((s.errors / s.calls) * 100) : 0;
+        lines.push(`  ${s.server} › ${s.tool}: ${s.calls} call(s), ${errPct}% errors, ~${avg}ms avg`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
+let cached: Health | null = null;
+export function getHealth(cfg: HubConfig): Health {
+  if (!cached) cached = new Health(cfg);
+  return cached;
+}

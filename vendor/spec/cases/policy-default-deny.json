@@ -1,0 +1,1 @@
+{"version":1,"id":"policy-default-deny","operation":"authorize","input":{"caller":"unknown","server":"filesystem","tool":"read","policy":{"allow":[],"deny":[]}},"expected":{"ok":true,"allowed":false,"reason":"default_deny"}}

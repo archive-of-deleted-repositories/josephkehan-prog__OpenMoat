@@ -1,0 +1,1 @@
+{"version":1,"id":"process-failure","operation":"process_failure","input":{"exitCode":17},"expected":{"ok":false,"error":{"code":"PROCESS_FAILED"}}}

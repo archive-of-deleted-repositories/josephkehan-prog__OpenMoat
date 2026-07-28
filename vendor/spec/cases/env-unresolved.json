@@ -1,0 +1,1 @@
+{"version":1,"id":"env-unresolved","operation":"resolve_env","input":{"value":"${OPENMOAT_MISSING}","environment":{}},"expected":{"ok":false,"error":{"code":"UNRESOLVED_ENV"}}}

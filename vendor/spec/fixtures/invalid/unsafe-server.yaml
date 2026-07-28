@@ -1,0 +1,11 @@
+apiVersion: openmoat.dev/v1
+kind: Moatfile
+features: {}
+targets: {}
+gateway:
+  callers: {}
+  servers:
+    bad:
+      command: ""
+      trust: bypass
+

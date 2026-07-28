@@ -1,0 +1,32 @@
+apiVersion: openmoat.dev/v1
+kind: Moatfile
+features:
+  reconcile: true
+  gateway: true
+  profile: true
+  handoffs: true
+  rag: false
+  embeddings: false
+  skills: false
+  plugins: false
+  instincts: false
+targets: {}
+gateway:
+  callers:
+    codex:
+      allow: ["filesystem:*"]
+      deny: ["filesystem:delete"]
+  servers:
+    filesystem:
+      command: node
+      args: ["./server.mjs"]
+      env:
+        TOKEN: "${FILESYSTEM_TOKEN}"
+      cwd: "./workspace"
+      trust: trusted
+      startupTimeoutMs: 5000
+      callTimeoutMs: 30000
+      limits:
+        failureThreshold: 3
+        resetAfterMs: 60000
+

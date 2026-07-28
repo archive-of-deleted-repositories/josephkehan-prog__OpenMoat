@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openmoat.dev/schema/conformance-case-v1.schema.json",
+  "title": "OpenMoat Conformance Case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "id", "operation", "input", "expected"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "operation": {
+      "enum": [
+        "validate", "resolve_path", "resolve_env", "authorize",
+        "process_failure", "timeout", "shutdown", "doctor"
+      ]
+    },
+    "input": {"type": "object"},
+    "expected": {"type": "object"},
+    "redact": {"type": "array", "items": {"type": "string"}}
+  }
+}

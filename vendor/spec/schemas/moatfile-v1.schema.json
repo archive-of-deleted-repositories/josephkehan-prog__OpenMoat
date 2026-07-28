@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openmoat.dev/schema/moatfile-v1.schema.json",
+  "title": "Moatfile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "features", "targets", "gateway"],
+  "properties": {
+    "apiVersion": {"const": "openmoat.dev/v1"},
+    "kind": {"const": "Moatfile"},
+    "features": {"$ref": "#/$defs/features"},
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {"type": "string", "minLength": 1},
+        "profile": {"type": "string", "minLength": 1},
+        "handoffs": {"type": "string", "minLength": 1}
+      }
+    },
+    "targets": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/target"}
+    },
+    "gateway": {"$ref": "#/$defs/gateway"},
+    "profile": {"$ref": "#/$defs/module"},
+    "handoffs": {"$ref": "#/$defs/module"},
+    "rag": {"$ref": "#/$defs/module"},
+    "embeddings": {"$ref": "#/$defs/module"},
+    "skills": {"$ref": "#/$defs/module"},
+    "plugins": {"$ref": "#/$defs/module"},
+    "instincts": {"$ref": "#/$defs/module"},
+    "backup": {"$ref": "#/$defs/module"},
+    "chezmoi": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "destination": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "$defs": {
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callers", "servers"],
+      "properties": {
+        "callers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "allow": {"type": "array", "items": {"type": "string", "minLength": 1}},
+              "deny": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            }
+          }
+        },
+        "servers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command"],
+            "properties": {
+              "command": {"type": "string", "minLength": 1},
+              "args": {"type": "array", "items": {"type": "string"}},
+              "env": {"type": "object", "additionalProperties": {"type": "string"}},
+              "cwd": {"type": "string", "minLength": 1},
+              "trust": {"enum": ["trusted", "quarantined", "disabled"]},
+              "startupTimeoutMs": {"type": "integer", "minimum": 1},
+              "callTimeoutMs": {"type": "integer", "minimum": 1},
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "failureThreshold": {"type": "integer", "minimum": 1},
+                  "resetAfterMs": {"type": "integer", "minimum": 1},
+                  "maxConcurrentCalls": {"type": "integer", "minimum": 1}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reconcile": {"type": "boolean", "default": true},
+        "gateway": {"type": "boolean", "default": true},
+        "profile": {"type": "boolean", "default": true},
+        "handoffs": {"type": "boolean", "default": true},
+        "rag": {"type": "boolean", "default": false},
+        "embeddings": {"type": "boolean", "default": false},
+        "skills": {"type": "boolean", "default": false},
+        "plugins": {"type": "boolean", "default": false},
+        "instincts": {"type": "boolean", "default": false}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean", "default": false},
+        "config": {"type": "string", "minLength": 1}
+      }
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {"enabled": {"type": "boolean"}}
+    }
+  }
+}

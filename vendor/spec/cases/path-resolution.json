@@ -1,0 +1,1 @@
+{"version":1,"id":"path-resolution","operation":"resolve_path","input":{"base":"/tmp/moat","value":"./server"},"expected":{"ok":true,"value":"/tmp/moat/server"}}
