@@ -3,7 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { loadSecrets, resolveServers, serversFor } from "../dist/registry.js";
+import {
+  loadRegistry,
+  loadRegistryCached,
+  loadSecrets,
+  loadSecretsCached,
+  resolveServers,
+  serversFor,
+} from "../dist/registry.js";
 
 const tmpFile = (content) => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "hub-registry-")), "secrets.env");
@@ -56,4 +63,21 @@ test("serversFor excludes gatewayOnly servers from harness configs", () => {
     { name: "hidden", command: "x", gatewayOnly: true },
   ];
   assert.deepEqual(serversFor(servers, "claude-code").map((s) => s.name), ["native"]);
+});
+
+test("registry and secret caches return stable parsed values", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-registry-cache-"));
+  try {
+    const registry = path.join(dir, "registry.json");
+    fs.writeFileSync(registry, '{"servers":[{"name":"one","command":"node"}]}');
+    assert.equal(loadRegistry(registry)[0].name, "one");
+    assert.equal(loadRegistryCached(registry)[0].name, "one");
+    assert.equal(loadRegistryCached(registry)[0].name, "one");
+
+    const missingSecrets = path.join(dir, "missing.env");
+    assert.deepEqual(loadSecretsCached(missingSecrets), {});
+    assert.deepEqual(loadSecretsCached(missingSecrets), {});
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

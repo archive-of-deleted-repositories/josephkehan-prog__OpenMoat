@@ -8,7 +8,11 @@ import {
   loadConfigFile,
   resolveConfigFile,
 } from "../dist/config.js";
-import { exportChezmoi, migrateLegacyConfig } from "../dist/integrations.js";
+import {
+  exportChezmoi,
+  isCanonicalMoatfile,
+  migrateLegacyConfig,
+} from "../dist/integrations.js";
 
 const writeMoatfile = (dir, extra = "") => {
   const file = path.join(dir, "Moatfile");
@@ -146,4 +150,13 @@ test("chezmoi export is optional and never invokes chezmoi", () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("canonical Moatfile detection is structural", () => {
+  assert.equal(
+    isCanonicalMoatfile("apiVersion: openmoat.dev/v1\nkind: Moatfile\n"),
+    true
+  );
+  assert.equal(isCanonicalMoatfile("kind: Other\n"), false);
+  assert.equal(isCanonicalMoatfile(""), false);
 });
