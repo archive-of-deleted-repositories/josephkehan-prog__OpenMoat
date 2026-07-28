@@ -28,7 +28,10 @@ gateway:
   try {
     const cfg = loadConfig("/ignored");
     assert.equal(cfg.registry, path.join(tmp, "registry/mcp-servers.json"));
-    assert.equal(cfg.stateDir, path.join(tmp, "state"));
+    assert.equal(
+      cfg.stateDir,
+      path.join(process.env.XDG_STATE_HOME ?? path.join(os.homedir(), ".local", "state"), "openmoat")
+    );
     assert.equal(cfg.targets.codex.config, path.join(tmp, "codex.toml"));
   } finally {
     delete process.env[CONFIG_ENV];
@@ -47,7 +50,7 @@ test("initWorkspace creates isolated starter and refuses accidental overwrite", 
     assert.ok(fs.existsSync(path.join(destination, "profile/AGENTS.md")));
     assert.ok(fs.existsSync(path.join(destination, "plugins")));
     assert.equal(fs.statSync(path.join(destination, "secrets.env")).mode & 0o077, 0);
-    assert.match(fs.readFileSync(path.join(destination, "secrets.env"), "utf8"), /OPENMOAT_ROOT=/);
+    assert.match(fs.readFileSync(path.join(destination, "secrets.env"), "utf8"), /^#/);
     const cfg = loadConfig(result.dir);
     assert.equal(cfg.pluginsDir, path.join(destination, "plugins"));
 

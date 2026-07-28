@@ -12,6 +12,12 @@ import { exportChezmoi, migrateLegacyConfig } from "../dist/integrations.js";
 
 const writeMoatfile = (dir, extra = "") => {
   const file = path.join(dir, "Moatfile");
+  const gateway = extra.startsWith("gateway:")
+    ? ""
+    : `gateway:
+  callers: {}
+  servers: {}
+`;
   fs.writeFileSync(
     file,
     `apiVersion: openmoat.dev/v1
@@ -27,9 +33,7 @@ features:
   plugins: false
   instincts: false
 targets: {}
-gateway:
-  callers: {}
-  servers: {}
+${gateway}
 ${extra}`
   );
   return file;

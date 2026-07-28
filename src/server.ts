@@ -350,7 +350,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
   );
 
   server.registerTool(
-    "hub_health",
+    "moat_health",
     {
       description:
         "Gateway health: open circuit breakers (servers cooling down, tools locked out) and per-tool call stats (volume, error rate, latency). Check when a tool_call fails or feels slow.",

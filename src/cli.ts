@@ -17,6 +17,12 @@ import { HUB_VERSION } from "./version.js";
 
 const program = new Command();
 program
+  .option("--file <path>", "Moatfile path (overrides OPENMOAT_FILE)")
+  .hook("preAction", (command) => {
+    const file = command.optsWithGlobals().file as string | undefined;
+    if (file) process.env.OPENMOAT_FILE = file;
+  });
+program
   .command("federation")
   .description("Show federated skill, MCP, and plugin sources, winners, conflicts, and warnings")
   .option("--json", "machine-readable snapshot")
@@ -112,6 +118,62 @@ program
     console.log(`\nexport OPENMOAT_FILE=${result.config}`);
     console.log("run `moat detect`, then preview selection with: moat configure <targets...>");
     console.log("after explicit --apply, run: moat doctor && moat sync --dry-run");
+  });
+
+program
+  .command("validate")
+  .description("Validate the selected Moatfile")
+  .option("--json", "machine-readable result")
+  .action((opts: { json?: boolean }) => {
+    try {
+      loadConfig();
+      const result = { ok: true };
+      console.log(opts.json ? JSON.stringify(result) : "Moatfile is valid");
+    } catch (error) {
+      const result = {
+        ok: false,
+        error: {
+          code: "INVALID_CONFIG",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      };
+      console.log(opts.json ? JSON.stringify(result) : result.error.message);
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("conformance")
+  .description("Evaluate one OpenMoat conformance case")
+  .requiredOption("--case <file>", "case JSON file")
+  .option("--json", "machine-readable result")
+  .action(async (opts: { case: string; json?: boolean }) => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { evaluateConformanceCase } = await import("./conformance.js");
+    const caseFile = path.resolve(opts.case);
+    const value = JSON.parse(fs.readFileSync(caseFile, "utf8")) as {
+      operation: string;
+      input: Record<string, unknown>;
+    };
+    const result = evaluateConformanceCase(value, caseFile);
+    console.log(opts.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+  });
+
+program
+  .command("migrate-config <legacy-json> <Moatfile>")
+  .description("Migrate configuration only; secrets and runtime state are never copied")
+  .action(async (legacy: string, destination: string) => {
+    const { migrateLegacyConfig } = await import("./integrations.js");
+    console.log(`wrote ${migrateLegacyConfig(legacy, destination).destination}`);
+  });
+
+program
+  .command("chezmoi-export <destination>")
+  .description("Copy the selected Moatfile into a chezmoi source tree without invoking chezmoi")
+  .action(async (destination: string) => {
+    const { exportChezmoi } = await import("./integrations.js");
+    console.log(`wrote ${exportChezmoi(configFile(), destination).destination}`);
   });
 
 program

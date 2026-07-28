@@ -31,7 +31,7 @@ function doctor(config, ...args) {
   return spawnSync(process.execPath, [path.resolve("dist/cli.js"), "doctor", "--json", ...args], {
     cwd: path.resolve("."),
     encoding: "utf8",
-    env: { ...process.env, OPENMOAT_CONFIG: config },
+    env: { ...process.env, OPENMOAT_FILE: config },
   });
 }
 

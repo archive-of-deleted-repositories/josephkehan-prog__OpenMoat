@@ -24,6 +24,13 @@ export interface ServerDef {
    *  without it they run in the hub's own directory and look up a project that
    *  does not exist. A caller-supplied cwd still wins. */
   cwd?: string;
+  startupTimeoutMs?: number;
+  callTimeoutMs?: number;
+  limits?: {
+    failureThreshold?: number;
+    resetAfterMs?: number;
+    maxConcurrentCalls?: number;
+  };
   notes?: string;
 }
 

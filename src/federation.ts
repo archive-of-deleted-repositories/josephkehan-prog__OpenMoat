@@ -282,6 +282,17 @@ export function buildFederationSnapshot(cfg: HubConfig): FederationSnapshot {
         value: skill,
       });
     }
+    if (source.id === "local") {
+      for (const server of cfg.inlineServers) {
+        servers.push({
+          id: `local/${server.name}`,
+          name: server.name,
+          source: "local",
+          priority: source.priority,
+          value: server,
+        });
+      }
+    }
     for (const registry of source.mcpRegistries) {
       if (!fs.existsSync(registry)) {
         warnings.push(`${source.id}: MCP registry missing: ${registry}`);

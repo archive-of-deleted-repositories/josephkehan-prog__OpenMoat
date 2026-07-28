@@ -3,7 +3,7 @@ import path from "node:path";
 import { repoRoot } from "./config.js";
 
 const STARTER_FILES = [
-  "hub.config.json",
+  "Moatfile",
   "registry/mcp-servers.json",
   "profile/AGENTS.md",
 ] as const;
@@ -39,13 +39,15 @@ export function initWorkspace(destination: string, force = false, root = repoRoo
   }
 
   const secrets = path.join(dir, "secrets.env");
-  fs.writeFileSync(secrets, `OPENMOAT_ROOT=${root}\n`, { mode: 0o600 });
+  fs.writeFileSync(secrets, "# Add NAME=value entries referenced by ${NAME} placeholders.\n", {
+    mode: 0o600,
+  });
   fs.chmodSync(secrets, 0o600);
   created.push(secrets);
 
   return {
     dir,
-    config: path.join(dir, "hub.config.json"),
+    config: path.join(dir, "Moatfile"),
     created,
   };
 }

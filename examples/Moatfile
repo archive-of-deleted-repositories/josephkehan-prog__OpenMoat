@@ -1,0 +1,59 @@
+apiVersion: openmoat.dev/v1
+kind: Moatfile
+paths:
+  state: ./state
+  profile: ./profile/AGENTS.md
+  handoffs: ./context
+features:
+  reconcile: true
+  gateway: true
+  profile: true
+  handoffs: true
+  rag: false
+  embeddings: false
+  skills: false
+  plugins: false
+  instincts: false
+targets:
+  codex:
+    enabled: false
+    config: ~/.codex/config.toml
+    memoryFile: ~/.codex/AGENTS.md
+  claude-code:
+    enabled: false
+    config: ~/.claude.json
+    memoryFile: ~/.claude/CLAUDE.md
+  claude-desktop:
+    enabled: false
+    config: ~/Library/Application Support/Claude/claude_desktop_config.json
+  hermes:
+    enabled: false
+    config: ~/.hermes/config.yaml
+  opencode:
+    enabled: false
+    config: ~/.config/opencode/opencode.jsonc
+    memoryFile: ~/.config/opencode/AGENTS.md
+  cursor:
+    enabled: false
+    config: ~/.cursor/mcp.json
+  pi:
+    enabled: false
+    config: ~/.pi/agent/mcp.json
+  zed:
+    enabled: false
+    config: ~/.config/zed/settings.json
+  continue:
+    enabled: false
+    config: ~/.continue/config.yaml
+  warp:
+    enabled: false
+    config: ~/.warp/.mcp.json
+  factory:
+    enabled: false
+    config: ~/.factory/mcp.json
+  vscode:
+    enabled: false
+    config: ~/Library/Application Support/Code/User/mcp.json
+gateway:
+  callers: {}
+  servers: {}

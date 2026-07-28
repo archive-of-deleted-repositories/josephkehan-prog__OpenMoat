@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { parseDocument } from "yaml";
 import { writeFileSafe } from "./backup.js";
 
 interface RawTarget {
@@ -29,12 +30,27 @@ export interface TargetConfigurationResult {
   harnessFilesWritten: false;
 }
 
-function readRawConfig(file: string): RawHubConfig {
-  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as RawHubConfig;
+function readRawConfig(file: string): {
+  raw: RawHubConfig;
+  serialize: (changes: TargetConfigurationChange[]) => string;
+} {
+  const source = fs.readFileSync(file, "utf8");
+  const json = path.extname(file).toLowerCase() === ".json";
+  const document = json ? undefined : parseDocument(source);
+  const raw = (json ? JSON.parse(source) : document!.toJS()) as RawHubConfig;
   if (!raw.targets || typeof raw.targets !== "object" || Array.isArray(raw.targets)) {
     throw new Error(`${file} has no targets object`);
   }
-  return raw;
+  return {
+    raw,
+    serialize: (changes) => {
+      if (json) return `${JSON.stringify(raw, null, 2)}\n`;
+      for (const change of changes) {
+        document!.setIn(["targets", change.id, "enabled"], change.after);
+      }
+      return document!.toString();
+    },
+  };
 }
 
 /**
@@ -51,7 +67,8 @@ export function configureTargets(
   apply = false
 ): TargetConfigurationResult {
   file = path.resolve(file);
-  const raw = readRawConfig(file);
+  const parsed = readRawConfig(file);
+  const raw = parsed.raw;
   const targets = raw.targets!;
   const requestedTargets = [...new Set(ids)];
   if (requestedTargets.length === 0) throw new Error("name at least one target");
@@ -70,7 +87,7 @@ export function configureTargets(
   let backup: string | null = null;
   if (apply && changes.length > 0) {
     for (const change of changes) targets[change.id].enabled = change.after;
-    backup = writeFileSafe(file, `${JSON.stringify(raw, null, 2)}\n`, stateDir, false);
+    backup = writeFileSafe(file, parsed.serialize(changes), stateDir, false);
   }
 
   return {

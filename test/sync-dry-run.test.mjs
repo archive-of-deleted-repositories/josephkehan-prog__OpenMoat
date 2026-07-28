@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { parseDocument } from "yaml";
 import { initWorkspace } from "../dist/init.js";
 
 function snapshot(root) {
@@ -33,14 +34,12 @@ test("sync dry-run is byte-for-byte read-only across configs, permissions, links
   const workspace = path.join(tmp, "workspace");
   try {
     const initialized = initWorkspace(workspace, false, path.resolve("."));
-    const config = JSON.parse(fs.readFileSync(initialized.config, "utf8"));
-    config.targets["claude-desktop"] = {
-      enabled: true,
-      config: "./targets/claude.json",
-      skillsLink: "./target-skills",
-      memoryFile: "./target-memory.md",
-    };
-    fs.writeFileSync(initialized.config, `${JSON.stringify(config, null, 2)}\n`);
+    const config = parseDocument(fs.readFileSync(initialized.config, "utf8"));
+    config.setIn(["targets", "claude-desktop", "enabled"], true);
+    config.setIn(["targets", "claude-desktop", "config"], "./targets/claude.json");
+    config.setIn(["targets", "claude-desktop", "skillsLink"], "./target-skills");
+    config.setIn(["targets", "claude-desktop", "memoryFile"], "./target-memory.md");
+    fs.writeFileSync(initialized.config, config.toString());
 
     fs.mkdirSync(path.join(workspace, "targets"), { recursive: true });
     fs.writeFileSync(path.join(workspace, "targets", "claude.json"), '{"mcpServers":{"personal":{"command":"keep"}}}\n');
@@ -57,7 +56,7 @@ test("sync dry-run is byte-for-byte read-only across configs, permissions, links
       {
         cwd: path.resolve("."),
         encoding: "utf8",
-        env: { ...process.env, OPENMOAT_CONFIG: initialized.config },
+        env: { ...process.env, OPENMOAT_FILE: initialized.config },
       }
     );
     assert.equal(result.status, 0, result.stderr);
@@ -85,9 +84,9 @@ test("sync updates gateway instructions through the canonical AGENTS symlink", (
   const workspace = path.join(tmp, "workspace");
   try {
     const initialized = initWorkspace(workspace, false, path.resolve("."));
-    const config = JSON.parse(fs.readFileSync(initialized.config, "utf8"));
-    config.memoryImport = "./AGENTS.md";
-    fs.writeFileSync(initialized.config, `${JSON.stringify(config, null, 2)}\n`);
+    const config = parseDocument(fs.readFileSync(initialized.config, "utf8"));
+    config.setIn(["paths", "profile"], "./AGENTS.md");
+    fs.writeFileSync(initialized.config, config.toString());
 
     const memoryImport = path.join(workspace, "AGENTS.md");
     const target = path.join(workspace, "profile", "AGENTS.md");
@@ -99,7 +98,7 @@ test("sync updates gateway instructions through the canonical AGENTS symlink", (
       {
         cwd: path.resolve("."),
         encoding: "utf8",
-        env: { ...process.env, OPENMOAT_CONFIG: initialized.config },
+        env: { ...process.env, OPENMOAT_FILE: initialized.config },
       }
     );
 

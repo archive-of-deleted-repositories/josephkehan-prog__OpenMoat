@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseDocument } from "yaml";
 import { loadConfigFile, repoRoot } from "./config.js";
 import {
   getFederationSnapshot,
@@ -94,28 +95,35 @@ export function runPortableDemo(
       ) + "\n"
     );
 
-    const raw = JSON.parse(fs.readFileSync(initialized.config, "utf8"));
+    const document = parseDocument(fs.readFileSync(initialized.config, "utf8"));
     const targetFiles: Record<(typeof TARGETS)[number], string> = {
       "claude-desktop": path.join(workspace, "claude-desktop.json"),
       hermes: path.join(workspace, "hermes.yaml"),
       opencode: path.join(workspace, "opencode.jsonc"),
     };
     for (const id of TARGETS) {
-      raw.targets[id].enabled = true;
-      raw.targets[id].config = targetFiles[id];
+      document.setIn(["targets", id, "enabled"], true);
+      document.setIn(["targets", id, "config"], targetFiles[id]);
     }
-    raw.targets.opencode.memoryFile = path.join(workspace, "opencode-AGENTS.md");
-    raw.federation.sources.push({
+    document.setIn(
+      ["targets", "opencode", "memoryFile"],
+      path.join(workspace, "opencode-AGENTS.md")
+    );
+    fs.writeFileSync(initialized.config, document.toString());
+    for (const file of Object.values(targetFiles)) fs.writeFileSync(file, "{}\n");
+
+    cfg = loadConfigFile(initialized.config);
+    cfg.federation = {
+      includeLocal: true,
+      conflictPolicy: "error",
+      sources: [{
       id: "team",
       priority: 50,
       skillRoots: [path.join(team, "skills")],
       mcpRegistries: [path.join(team, "registry.json")],
       pluginCatalogs: [path.join(team, "plugins.json")],
-    });
-    fs.writeFileSync(initialized.config, JSON.stringify(raw, null, 2) + "\n");
-    for (const file of Object.values(targetFiles)) fs.writeFileSync(file, "{}\n");
-
-    cfg = loadConfigFile(initialized.config);
+      }],
+    };
     const snapshot = getFederationSnapshot(cfg, true);
     const selected = {
       servers: snapshot.servers.filter((asset) => asset.selected).length,
