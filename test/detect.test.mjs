@@ -77,5 +77,5 @@ test("human detection output states the safety boundary and exact review step", 
   const output = renderDetection(report);
   assert.match(output, /no files changed/);
   assert.match(output, /Suggested after review: codex/);
-  assert.match(output, /hub doctor && hub sync --dry-run/);
+  assert.match(output, /moat doctor && moat sync --dry-run/);
 });
