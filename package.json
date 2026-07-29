@@ -13,7 +13,10 @@
   "files": [
     "dist/",
     "examples/",
-    "vendor/spec/",
+    "vendor/spec/cases/",
+    "vendor/spec/conformance/*.py",
+    "vendor/spec/fixtures/",
+    "vendor/spec/schemas/",
     "LICENSE",
     "README.md",
     "ARCHITECTURE.md",
