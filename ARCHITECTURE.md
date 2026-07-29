@@ -11,6 +11,10 @@ Internally the reference product has four separable layers:
    independently of reconciliation adapters.
 4. Optional shared-brain modules consume the normalized runtime configuration.
 
+Core `tool_search` uses deterministic lexical ranking over a bounded,
+provenance-labeled catalog. It never turns on RAG, calls an embedding model, or
+contacts a reranker. Semantic document RAG remains a separate opt-in feature.
+
 The intended evolutionary path is a TypeScript control plane with an optional
 Rust data-plane gateway. `server.ts` depends on `GatewayRuntime`, not child
 process details, so a future Rust process can replace the local runtime without

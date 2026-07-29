@@ -31,6 +31,7 @@ import {
 } from "./instincts.js";
 import { catalogDirs } from "./mcp-rag.js";
 import { Rag } from "./rag.js";
+import { searchToolCatalog } from "./tool-catalog.js";
 import { HUB_VERSION } from "./version.js";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
@@ -149,40 +150,6 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     );
   }
 
-  // Cross-encoder re-rank for tool_search candidates. Qwen3-Reranker is a
-  // co-resident lane on the local llama-swap (:1235), so a call never evicts
-  // the warm base model. 1.5s budget — ranking must never hang tool_search.
-  // Any failure returns the input order unchanged (hybrid bm25+embedding).
-  async function rerankWithCrossEncoder(
-    query: string,
-    hits: { file: string; heading: string; snippet: string; score: number }[],
-    k: number
-  ): Promise<typeof hits> {
-    if (!hits.length) return hits;
-    const url = process.env.HUB_RERANK_URL ?? "http://127.0.0.1:1235/v1/rerank";
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          model: process.env.HUB_RERANK_MODEL ?? "reranker",
-          query,
-          documents: hits.map((h) => `${h.heading} — ${h.snippet.slice(0, 300)}`),
-        }),
-        signal: AbortSignal.timeout(1500),
-      });
-      if (!res.ok) return hits.slice(0, k);
-      const json = (await res.json()) as { results?: { index: number; relevance_score: number }[] };
-      if (!Array.isArray(json.results)) return hits.slice(0, k);
-      return json.results
-        .sort((a, b) => b.relevance_score - a.relevance_score)
-        .slice(0, k)
-        .map((r) => ({ ...hits[r.index], score: Math.round(r.relevance_score * 1000) / 1000 }));
-    } catch {
-      return hits.slice(0, k);
-    }
-  }
-
   server.registerTool(
     "tool_search",
     {
@@ -191,18 +158,11 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       inputSchema: { query: z.string(), k: z.number().int().min(1).max(15).optional() },
     },
     async ({ query, k }) => {
-      const activeRag = getRag();
-      await activeRag.index();
       const { toolsDir } = catalogDirs(cfg);
-      // Retrieve top-20 hybrid (bm25 + embedding cosine), then re-rank with the
-      // local cross-encoder (Qwen3-Reranker via llama-swap /v1/rerank). Benchmark
-      // 2026-07-24 on 1,456-query non-circular corpus: mrr 0.2564 -> 0.5689,
-      // top1 0.1607 -> 0.4429 vs the old ftsOnly path. Falls back to hybrid
-      // order on any reranker failure, and to FTS-only if embeddings are down.
+      // Core discovery is deterministic lexical ranking over a human-refreshed
+      // catalog. It never loads embeddings, contacts a model, or turns on RAG.
       const want = k ?? 5;
-      let hits = await activeRag.search(query, 50, {
-        pathPrefix: toolsDir,
-      });
+      let hits = searchToolCatalog(toolsDir, query, 50);
       // Search is discovery, but discovery still observes the same caller,
       // trust, and zone boundaries as describe/call. Otherwise a denied server
       // can poison or disclose its catalog metadata before a call is refused.
@@ -222,7 +182,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
           asset.value.zone ?? "default"
         ).allowed;
       });
-      hits = await rerankWithCrossEncoder(query, hits, want);
+      hits = hits.slice(0, want);
       // demote results from servers whose breaker is open
       const flaky = getHealth(cfg).openServers();
       if (flaky.size) {
