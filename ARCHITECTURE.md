@@ -25,7 +25,9 @@ must first be derived from cross-language conformance evidence.
 The MCP TypeScript v2 client, server, and core packages are pinned at 2.0.0.
 Protocol package differences are not exposed in OpenMoat JSON contracts.
 
-`vendor/spec` is produced by `scripts/update-spec.sh`, verified against the
-signed tag and exact commit in `spec.lock`, and never edited by hand. Its
+`vendor/spec` is produced by `scripts/update-spec.sh /path/to/OpenMoat-Spec`,
+verified against the signed tag and exact commit in `spec.lock`, and never
+edited by hand. Calling the script without a source verifies the vendored
+snapshot, so a standalone clone has no sibling-repository dependency. Its
 black-box fixtures are intentionally usable by implementations in any
 language.

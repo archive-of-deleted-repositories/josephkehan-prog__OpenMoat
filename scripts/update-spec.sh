@@ -1,12 +1,22 @@
 #!/bin/sh
 set -eu
 
-spec_repo=${1:-../OpenMoat-Spec}
 lock_file=${2:-spec.lock}
 read_lock='const f=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(f[process.argv[2]])'
 tag=$(node -e "$read_lock" "$lock_file" tag)
 expected_commit=$(node -e "$read_lock" "$lock_file" commit)
 expected_digest=$(node -e "$read_lock" "$lock_file" snapshotSha256)
+
+if [ "$#" -eq 0 ]; then
+  test "$(node scripts/spec-digest.mjs vendor/spec)" = "$expected_digest" || {
+    echo "vendored snapshot verification failed" >&2
+    exit 1
+  }
+  echo "verified vendored ${tag} (${expected_commit})"
+  exit 0
+fi
+
+spec_repo=$1
 actual_commit=$(git -C "$spec_repo" rev-parse "${tag}^{}")
 
 test "$actual_commit" = "$expected_commit" || {
