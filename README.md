@@ -67,6 +67,10 @@ They are continuity notes, not a substitute for a model context window or a
 trusted knowledge base. Promote reviewed durable facts into human-owned
 profile files.
 
+Optional features are absent from the MCP tool list until enabled in
+`Moatfile`; disabling RAG, skills, plugins, or instincts therefore removes
+their model-callable surface rather than merely disabling a background job.
+
 `moat migrate-config old.json Moatfile` copies configuration only. It never
 copies secrets, databases, OAuth tokens, archives, or other runtime state.
 

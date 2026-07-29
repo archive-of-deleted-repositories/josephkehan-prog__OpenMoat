@@ -61,7 +61,8 @@ export function recentUsageEvents(cfg: HubConfig, n: number): string {
 
 export async function serve(cfg: HubConfig): Promise<void> {
   const server = new McpServer({ name: "openmoat", version: HUB_VERSION });
-  const rag = new Rag(cfg);
+  let rag: Rag | undefined;
+  const getRag = () => (rag ??= new Rag(cfg));
   const gatewayRuntime = createGatewayRuntime(cfg);
   const contextStore = new ContextStore(cfg.contextDir);
 
@@ -95,38 +96,58 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
           `## Latest caller-scoped context (${latest.relativePath})\n${latest.content.slice(0, 4000)}`
         );
       }
-      const skills = federatedSkills(cfg);
-      parts.push(
-        `## Skills (${skills.length} selected, pull-only)\nNot preloaded. When a task matches one, call skills_list to see them, then skill_read to load it. Qualified source/name ids remain available when catalogs overlap.`
-      );
+      if (cfg.features.skills) {
+        const skills = federatedSkills(cfg);
+        parts.push(
+          `## Skills (${skills.length} selected, pull-only)\nNot preloaded. When a task matches one, call skills_list to see them, then skill_read to load it. Qualified source/name ids remain available when catalogs overlap.`
+        );
+      }
       parts.push(`## MCP registry\n${servers.map((s) => `- ${s.name}${s.notes ? ` — ${s.notes}` : ""}`).join("\n")}`);
       return text(parts.join("\n\n"));
     }
   );
 
-  server.registerTool(
-    "rag_search",
-    {
-      description:
-        "Semantic + full-text search over configured workspace documents, handoffs, profiles, skills, and guides.",
-      inputSchema: { query: z.string(), k: z.number().int().min(1).max(20).optional() },
-    },
-    async ({ query, k }) => {
-      await rag.index(); // incremental — cheap when nothing changed
-      const hits = (await rag.search(query, (k ?? 6) * 3))
-        .filter(
-          (hit) =>
-            !path
-              .resolve(hit.file)
-              .startsWith(`${path.resolve(cfg.contextDir)}${path.sep}`) ||
-            contextStore.owns(agentName(), hit.file)
-        )
-        .slice(0, k ?? 6);
-      logUsage(cfg, { tool: "rag_search", agent: agentName(), query, topScore: hits[0]?.score ?? 0 });
-      if (!hits.length) return text("No matches.");
-      return text(hits.map((h) => `[${h.score}] ${h.file} › ${h.heading}\n${h.snippet}`).join("\n\n---\n\n"));
-    }
-  );
+  if (cfg.features.rag) {
+    server.registerTool(
+      "rag_search",
+      {
+        description:
+          "Semantic + full-text search over configured workspace documents, caller-scoped handoffs, profiles, skills, and guides.",
+        inputSchema: {
+          query: z.string(),
+          k: z.number().int().min(1).max(20).optional(),
+        },
+      },
+      async ({ query, k }) => {
+        const activeRag = getRag();
+        await activeRag.index();
+        const hits = (await activeRag.search(query, (k ?? 6) * 3))
+          .filter(
+            (hit) =>
+              !path
+                .resolve(hit.file)
+                .startsWith(`${path.resolve(cfg.contextDir)}${path.sep}`) ||
+              contextStore.owns(agentName(), hit.file)
+          )
+          .slice(0, k ?? 6);
+        logUsage(cfg, {
+          tool: "rag_search",
+          agent: agentName(),
+          query,
+          topScore: hits[0]?.score ?? 0,
+        });
+        if (!hits.length) return text("No matches.");
+        return text(
+          hits
+            .map(
+              (hit) =>
+                `[${hit.score}] ${hit.file} › ${hit.heading}\n${hit.snippet}`
+            )
+            .join("\n\n---\n\n")
+        );
+      }
+    );
+  }
 
   // Cross-encoder re-rank for tool_search candidates. Qwen3-Reranker is a
   // co-resident lane on the local llama-swap (:1235), so a call never evicts
@@ -170,7 +191,8 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       inputSchema: { query: z.string(), k: z.number().int().min(1).max(15).optional() },
     },
     async ({ query, k }) => {
-      await rag.index();
+      const activeRag = getRag();
+      await activeRag.index();
       const { toolsDir } = catalogDirs(cfg);
       // Retrieve top-20 hybrid (bm25 + embedding cosine), then re-rank with the
       // local cross-encoder (Qwen3-Reranker via llama-swap /v1/rerank). Benchmark
@@ -178,7 +200,9 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       // top1 0.1607 -> 0.4429 vs the old ftsOnly path. Falls back to hybrid
       // order on any reranker failure, and to FTS-only if embeddings are down.
       const want = k ?? 5;
-      let hits = await rag.search(query, 50, { pathPrefix: toolsDir });
+      let hits = await activeRag.search(query, 50, {
+        pathPrefix: toolsDir,
+      });
       // Search is discovery, but discovery still observes the same caller,
       // trust, and zone boundaries as describe/call. Otherwise a denied server
       // can poison or disclose its catalog metadata before a call is refused.
@@ -381,8 +405,9 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     }
   );
 
-  server.registerTool(
-    "instinct_report",
+  if (cfg.features.instincts) {
+    server.registerTool(
+      "instinct_report",
     {
       description:
         "Self-evaluation: report a gateway miss you noticed — e.g. you did something the hard way and later realized a gateway tool existed, or a task category that should trigger tool_search but didn't. Creates/reinforces a learned instinct; instincts above 0.5 confidence are auto-published into every agent's instructions on next sync.",
@@ -426,7 +451,8 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       });
       return text(`instinct recorded: "${inst.rule}" — confidence ${inst.confidence.toFixed(2)}${inst.confidence >= 0.5 ? " (will publish on next sync)" : ""}`);
     }
-  );
+    );
+  }
 
   server.registerTool(
     "mcp_discover",
@@ -450,8 +476,9 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     }
   );
 
-  server.registerTool(
-    "context_save",
+  if (cfg.features.handoffs) {
+    server.registerTool(
+      "context_save",
     {
       description:
         "Preserve bounded context for the next session launched with the same caller identity. Notes are isolated by caller and labeled as untrusted agent-authored data.",
@@ -459,15 +486,15 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     },
     async ({ title, content }) => {
       const saved = contextStore.save(agentName(), title, content);
-      await rag.index(); // make it searchable immediately
+      if (cfg.features.rag) await getRag().index();
       return text(
         `saved caller-scoped context ${saved.relativePath} (indexed for rag_search)`
       );
     }
-  );
+    );
 
-  server.registerTool(
-    "context_latest",
+    server.registerTool(
+      "context_latest",
     {
       description:
         "Read the most recent context notes written by this same caller identity (default 3).",
@@ -485,7 +512,8 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
           .join("\n\n")
       );
     }
-  );
+    );
+  }
 
   server.registerTool(
     "federation_status",
@@ -497,8 +525,9 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     async () => text(renderFederation(getFederationSnapshot(cfg, true)))
   );
 
-  server.registerTool(
-    "skills_list",
+  if (cfg.features.skills) {
+    server.registerTool(
+      "skills_list",
     {
       description:
         "List selected shared skills with federated source ids. Use source/name to address a shadowed skill explicitly.",
@@ -515,10 +544,10 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
           .join("\n") || "No skills found."
       );
     }
-  );
+    );
 
-  server.registerTool(
-    "skill_read",
+    server.registerTool(
+      "skill_read",
     {
       description:
         "Read a skill's full SKILL.md by selected name or qualified source/name id.",
@@ -529,10 +558,12 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       if (!skill) return text(`Skill '${name}' not found. Use skills_list.`);
       return text(fs.readFileSync(skill.value.skillMd, "utf8"));
     }
-  );
+    );
+  }
 
-  server.registerTool(
-    "plugins_list",
+  if (cfg.features.plugins) {
+    server.registerTool(
+      "plugins_list",
     {
       description:
         "List selected plugins across federated stores/catalogs, including source, ecosystem, version, scope, and components.",
@@ -541,17 +572,20 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     async () => {
       return text(renderFederatedPlugins(federatedPlugins(cfg)));
     }
-  );
+    );
+  }
 
-  server.registerTool(
-    "profile_read",
+  if (cfg.features.profile) {
+    server.registerTool(
+      "profile_read",
     { description: "Read one of the shared profile files (IDENTITY, SOUL, USER, TOOLS, AGENTS).", inputSchema: { file: z.string() } },
     async ({ file }) => {
       const match = cfg.profileFiles.find((p) => path.basename(p).toLowerCase().startsWith(file.toLowerCase()));
       if (!match || !fs.existsSync(match)) return text(`Not found. Available: ${cfg.profileFiles.map((p) => path.basename(p)).join(", ")}`);
       return text(fs.readFileSync(match, "utf8"));
     }
-  );
+    );
+  }
 
   server.registerTool(
     "registry_list",
