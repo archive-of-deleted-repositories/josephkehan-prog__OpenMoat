@@ -29,7 +29,7 @@ test("saved context is caller-scoped, bounded, sanitized, and provenance-labeled
   );
   const source = fs.readFileSync(saved.file, "utf8");
 
-  assert.match(saved.relativePath, /^codex\//);
+  assert.match(saved.relativePath, /^codex--[a-f0-9]{16}\//);
   assert.match(source, /Untrusted agent-authored context/);
   assert.match(source, /Caller: codex/);
   assert.doesNotMatch(source, /\u001b/);

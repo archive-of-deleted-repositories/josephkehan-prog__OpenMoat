@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import test from "node:test";
+import { contextNamespace } from "../dist/context-store.js";
 
 const PROTOCOL_VERSION = "2026-07-28";
 
@@ -183,8 +184,18 @@ test("outward stdio serves modern requests and resolves caller labels per reques
       );
       assert.equal(saved.error, undefined);
     }
-    assert.equal(fs.existsSync(path.join(instance.root, "handoffs", "caller-a")), true);
-    assert.equal(fs.existsSync(path.join(instance.root, "handoffs", "caller-b")), true);
+    assert.equal(
+      fs.existsSync(
+        path.join(instance.root, "handoffs", contextNamespace("caller-a"))
+      ),
+      true
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(instance.root, "handoffs", contextNamespace("caller-b"))
+      ),
+      true
+    );
   } finally {
     await stopOpenMoat(instance);
   }
@@ -210,11 +221,23 @@ test("trusted launcher caller overrides modern request labels", async () => {
     );
     assert.equal(saved.error, undefined);
     assert.equal(
-      fs.existsSync(path.join(instance.root, "handoffs", "launcher-caller")),
+      fs.existsSync(
+        path.join(
+          instance.root,
+          "handoffs",
+          contextNamespace("launcher-caller")
+        )
+      ),
       true
     );
     assert.equal(
-      fs.existsSync(path.join(instance.root, "handoffs", "request-caller")),
+      fs.existsSync(
+        path.join(
+          instance.root,
+          "handoffs",
+          contextNamespace("request-caller")
+        )
+      ),
       false
     );
   } finally {
@@ -296,8 +319,8 @@ test("modern structured envelopes are bounded and archived for retrieval", async
     assert.equal(response.error, undefined);
     assert.ok(JSON.stringify(response.result).length < 12_000);
     assert.match(
-      response.result.content[0].text,
-      /structured envelope archived/
+      response.result.content.map((block) => block.text ?? "").join("\n"),
+      /structured envelope archived/i
     );
     assert.match(
       response.result.structuredContent.openmoatArchivedResult.hash,
