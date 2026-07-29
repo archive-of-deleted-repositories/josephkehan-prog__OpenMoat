@@ -71,13 +71,17 @@ export class FileOAuthProvider implements OAuthClientProvider {
   private pendingCode?: string;
   private pendingError?: Error;
   private waitTimer?: NodeJS.Timeout;
-  // CSRF: the `state` the SDK put on the authorization URL. The callback must
-  // echo it back, otherwise a different flow's (or an attacker's) code could
-  // be fed into this waiting server. Undefined = SDK sent no state; then we
-  // can't bind it, but PKCE + loopback binding still protect the flow.
+  // CSRF: issue the SDK a random `state`, require the authorization URL to
+  // carry that exact value, then require the callback to echo it once.
   private expectedState?: string;
+  private issuedState?: string;
 
-  constructor(stateDir: string, private serverName: string, private interactive: boolean) {
+  constructor(
+    stateDir: string,
+    private serverName: string,
+    private interactive: boolean,
+    private openAuthorization: (url: string) => void = openBrowser
+  ) {
     const dir = path.join(stateDir, "oauth");
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.chmodSync(dir, 0o700);
@@ -207,16 +211,34 @@ export class FileOAuthProvider implements OAuthClientProvider {
     return v;
   }
 
+  state(): string {
+    const state = crypto.randomBytes(32).toString("base64url");
+    this.issuedState = state;
+    return state;
+  }
+
   async redirectToAuthorization(url: URL): Promise<void> {
     if (!this.interactive) {
       throw new Error(
         `'${this.serverName}' requires OAuth authorization — run \`node dist/cli.js auth ${this.serverName}\` once (opens browser), then it's usable from every agent.`
       );
     }
-    // Remember the SDK-issued `state` so the callback can be bound to it.
-    this.expectedState = url.searchParams.get("state") ?? undefined;
+    const state = url.searchParams.get("state") ?? "";
+    const expected = this.issuedState ?? "";
+    const stateBytes = Buffer.from(state);
+    const expectedBytes = Buffer.from(expected);
+    if (
+      !state ||
+      !expected ||
+      stateBytes.length !== expectedBytes.length ||
+      !crypto.timingSafeEqual(stateBytes, expectedBytes)
+    ) {
+      throw new Error("authorization failed: OAuth state mismatch");
+    }
+    this.expectedState = state;
+    this.issuedState = undefined;
     await this.startCallbackServer();
-    openBrowser(url.toString());
+    this.openAuthorization(url.toString());
     console.error(`openmoat: browser opened to authorize '${this.serverName}' — waiting for approval…\n  (if no browser appeared, open: ${url})`);
   }
 
@@ -270,8 +292,13 @@ export class FileOAuthProvider implements OAuthClientProvider {
           res.writeHead(400, { "content-type": "text/html" });
           res.end("<body>authorization failed: state mismatch</body>");
           const e = new Error("authorization failed: OAuth state mismatch (possible CSRF)");
-          if (this.codeReject) this.codeReject(e);
+          const reject = this.codeReject;
+          this.codeReject = undefined;
+          this.codeResolve = undefined;
+          this.expectedState = undefined;
+          if (reject) reject(e);
           else this.pendingError = e;
+          this.closeCallbackServer();
           return;
         }
         const code = u.searchParams.get("code");
@@ -286,13 +313,22 @@ export class FileOAuthProvider implements OAuthClientProvider {
             : "<body>authorization failed</body>"
         );
         if (code) {
-          if (this.codeResolve) this.codeResolve(code);
+          const resolve = this.codeResolve;
+          this.codeResolve = undefined;
+          this.codeReject = undefined;
+          this.expectedState = undefined;
+          if (resolve) resolve(code);
           else this.pendingCode = code; // landed before waitForCode — buffer it
         } else {
           const e = new Error(`authorization failed: ${err ?? "no code returned"}`);
-          if (this.codeReject) this.codeReject(e);
+          const reject = this.codeReject;
+          this.codeReject = undefined;
+          this.codeResolve = undefined;
+          this.expectedState = undefined;
+          if (reject) reject(e);
           else this.pendingError = e;
         }
+        this.closeCallbackServer();
       });
       const port = callbackPort();
       this.server.on("error", (e) => {
@@ -304,7 +340,6 @@ export class FileOAuthProvider implements OAuthClientProvider {
         );
       });
       this.server.listen(port, "127.0.0.1", () => resolve());
-      this.server.unref();
     });
   }
 
@@ -313,6 +348,8 @@ export class FileOAuthProvider implements OAuthClientProvider {
     this.waitTimer = undefined;
     this.server?.close();
     this.server = undefined;
+    this.issuedState = undefined;
+    this.expectedState = undefined;
   }
 
   saveDiscoveryState(state: OAuthDiscoveryState): void {

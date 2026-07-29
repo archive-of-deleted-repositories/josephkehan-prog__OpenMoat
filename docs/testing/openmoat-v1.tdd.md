@@ -10,9 +10,7 @@ four tests failed against 0.4:
 - retired reconciliation and shared-agent modules remained in `src`
 - `init` created profile, registry, skills, plugins, and context trees
 
-The signed RED commit was attempted but could not be created because the
-configured encrypted SSH signing key was not available to the non-interactive
-session. Commit signing was not bypassed.
+Signed RED checkpoint: `1e3ab903be8a26bfdac54ed2e7e435042d8c8b20`.
 
 ## GREEN
 
@@ -30,3 +28,27 @@ The focused implementation makes the product-contract test pass and adds:
 
 The release gate is `npm run verify`. Exact command output and commit state
 belong in the external release-evidence report, not this durable test design.
+
+## OAuth red-team follow-up
+
+The release completion audit found that the provider validated an OAuth
+`state` value but did not implement the SDK hook that generates one. A second
+probe found that the interactive CLI exited after opening authorization because
+its callback server was unreferenced.
+
+Signed RED checkpoints:
+
+- `2d9aaf2abd13a064e565a69a4c25de5b127d9a49`: missing `state()` fails with
+  `TypeError: provider.state is not a function`
+- `77e56bac489080c8fe00856fb77bcb5b9ed14e33`: the callback subprocess exits
+  before receiving a terminal callback
+
+GREEN guarantees:
+
+- 256-bit base64url OAuth state is generated and bound before browser launch
+- wrong-state callbacks fail and close the loopback listener
+- successful state is accepted once and closes the listener
+- the interactive process stays alive until a terminal callback
+- a controlled local issuer completes dynamic registration, state, PKCE token
+  exchange, authenticated MCP discovery, private issuer-bound persistence, and
+  callback teardown

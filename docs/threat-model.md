@@ -25,7 +25,7 @@ boundary and can impersonate policy labels.
 | Path or symlink escape | realpath both candidate and roots; reject undeclared caller cwd | runtime security tests |
 | Command or argument injection | direct argv spawn; no shell; bounded schema fields | configuration tests and code review |
 | Secret leakage | minimal child env, runtime placeholder resolution, recursive value/key redaction, coarse diagnostics | redaction and protocol-envelope tests |
-| OAuth callback/state/issuer confusion | loopback callback, state comparison, PKCE, hashed filenames, per-issuer credential maps, bounded port | OAuth storage tests and manual auth checklist |
+| OAuth callback/state/issuer confusion | random one-time state, loopback callback, PKCE, hashed filenames, per-issuer credential maps, bounded port | state/liveness tests and controlled-issuer release probe |
 | Oversized or adversarial result | depth, entry, byte, paging, owner quota, entry quota, TTL | archive and envelope tests |
 | Pool, timeout, breaker exhaustion | global/per-server pool limits, per-server concurrency, deadlines, idle reap, persisted breakers | runtime and health tests |
 | Malformed protocol or downgrade confusion | official SDK dual-era negotiation; hop metadata removed | legacy/modern outward/downstream matrix |
