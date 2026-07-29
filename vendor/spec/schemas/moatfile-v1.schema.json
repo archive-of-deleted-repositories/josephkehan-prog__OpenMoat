@@ -23,6 +23,13 @@
       "additionalProperties": {"$ref": "#/$defs/target"}
     },
     "gateway": {"$ref": "#/$defs/gateway"},
+    "federation": {"$ref": "#/$defs/federation"},
+    "prewarm": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "default": []
+    },
     "profile": {"$ref": "#/$defs/module"},
     "handoffs": {"$ref": "#/$defs/module"},
     "rag": {"$ref": "#/$defs/module"},
@@ -149,11 +156,66 @@
     },
     "target": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": ["enabled"],
       "properties": {
         "enabled": {"type": "boolean", "default": false},
-        "config": {"type": "string", "minLength": 1}
+        "config": {"type": "string", "minLength": 1},
+        "skillsLink": {"type": "string", "minLength": 1},
+        "memoryFile": {"type": "string", "minLength": 1}
+      }
+    },
+    "pathList": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true,
+      "default": []
+    },
+    "pluginStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "path"],
+      "properties": {
+        "type": {"enum": ["claude", "codex"]},
+        "path": {"type": "string", "minLength": 1}
+      }
+    },
+    "federationSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+        },
+        "enabled": {"type": "boolean", "default": true},
+        "priority": {"type": "integer", "default": 0},
+        "allowNative": {"type": "boolean", "default": false},
+        "skillRoots": {"$ref": "#/$defs/pathList"},
+        "mcpRegistries": {"$ref": "#/$defs/pathList"},
+        "pluginStores": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/pluginStore"},
+          "default": []
+        },
+        "pluginCatalogs": {"$ref": "#/$defs/pathList"}
+      }
+    },
+    "federation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "includeLocal": {"type": "boolean", "default": true},
+        "conflictPolicy": {
+          "enum": ["error", "prefer-priority"],
+          "default": "error"
+        },
+        "sources": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/federationSource"},
+          "default": []
+        }
       }
     },
     "module": {

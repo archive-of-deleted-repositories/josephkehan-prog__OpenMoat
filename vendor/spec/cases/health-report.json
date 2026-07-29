@@ -1,0 +1,1 @@
+{"version":1,"id":"health-report","driver":"mcp","operation":"health_report","input":{"server":{"mode":"normal"}},"expected":{"ok":true,"schemaValid":true,"childStatus":true,"latency":true,"failures":true}}

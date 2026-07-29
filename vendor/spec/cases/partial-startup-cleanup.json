@@ -1,0 +1,1 @@
+{"version":1,"id":"partial-startup-cleanup","driver":"mcp","operation":"partial_startup_cleanup","input":{"server":{"mode":"spawn-descendant-hang-startup","startupTimeoutMs":100}},"expected":{"ok":true,"childrenRemaining":0}}

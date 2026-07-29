@@ -1,0 +1,1 @@
+{"version":1,"id":"failure-recovery","driver":"mcp","operation":"failure_recovery","input":{"server":{"mode":"normal","limits":{"failureThreshold":3,"resetAfterMs":1000,"maxConcurrentCalls":2}}},"expected":{"ok":true,"firstError":"PROCESS_FAILED","recovered":true}}

@@ -13,8 +13,11 @@
       "enum": [
         "validate", "resolve_path", "resolve_env", "authorize",
         "caller_binding", "cwd_root_escape", "environment_isolation",
-        "metadata_poisoning", "pool_limit", "process_failure",
-        "secret_redaction", "shutdown", "timeout", "doctor"
+        "failure_recovery", "health_report", "lazy_spawn",
+        "metadata_poisoning", "orphan_cleanup", "partial_startup_cleanup",
+        "pool_limit", "process_failure", "reuse_isolation",
+        "secret_redaction", "shutdown", "signal_cleanup", "timeout",
+        "tool_routing", "doctor"
       ]
     },
     "input": {"type": "object"},

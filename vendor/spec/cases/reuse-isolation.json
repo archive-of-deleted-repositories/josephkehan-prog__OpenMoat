@@ -1,0 +1,1 @@
+{"version":1,"id":"reuse-isolation","driver":"mcp","operation":"reuse_isolation","input":{"server":{"mode":"normal"},"workingDirectories":2},"expected":{"ok":true,"warmReuse":true,"cwdIsolation":true}}
