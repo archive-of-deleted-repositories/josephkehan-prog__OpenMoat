@@ -1,8 +1,15 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { UnauthorizedError } from "@modelcontextprotocol/client";
-import { Client } from "@modelcontextprotocol/client";
-import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  Client,
+  PROTOCOL_VERSION_META_KEY,
+  SERVER_INFO_META_KEY,
+  UnauthorizedError,
+  type CallToolResult,
+  type StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import type { OpenMoatConfig } from "./config.js";
 import {
   resolveFederatedServer,
@@ -53,6 +60,44 @@ const pool = new Map<string, PoolEntry>();
 const inflight = new Map<string, Promise<PoolEntry>>();
 const reservations = new Map<string, string>();
 const activeCalls = new Map<string, number>();
+
+const DOWNSTREAM_HOP_META_KEYS = new Set([
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  PROTOCOL_VERSION_META_KEY,
+  SERVER_INFO_META_KEY,
+]);
+
+export function newGatewayClient(): Client {
+  return new Client(
+    {
+      name: "openmoat-gateway",
+      version: OPENMOAT_VERSION,
+    },
+    {
+      versionNegotiation: {
+        mode: "auto",
+      },
+    }
+  );
+}
+
+function filterToolResult(
+  result: CallToolResult,
+  redactor: SecretRedactor
+): CallToolResult {
+  const redacted = redactor.redact(result);
+  const { _meta: downstreamMeta, ...withoutMeta } = redacted;
+  if (!downstreamMeta) return withoutMeta;
+  const safeMeta = Object.fromEntries(
+    Object.entries(downstreamMeta).filter(
+      ([key]) => !DOWNSTREAM_HOP_META_KEYS.has(key)
+    )
+  );
+  return Object.keys(safeMeta).length
+    ? { ...withoutMeta, _meta: safeMeta }
+    : withoutMeta;
+}
 
 /** All descendant pids of `pid` (children, grandchildren, …), breadth-first. */
 function descendants(pid: number): number[] {
@@ -355,10 +400,7 @@ async function connectHttp(
       const code = await provider.waitForCode();
       await transport.finishAuth(code);
       provider.closeCallbackServer();
-      client = new Client({
-        name: "openmoat-gateway",
-        version: OPENMOAT_VERSION,
-      });
+      client = newGatewayClient();
       transport = makeTransport(server, {
         authProvider: provider,
       }) as StreamableHTTPClientTransport;
@@ -418,10 +460,7 @@ async function spawnClient(
     );
   }
 
-  let client = new Client({
-    name: "openmoat-gateway",
-    version: OPENMOAT_VERSION,
-  });
+  let client = newGatewayClient();
   let pid: number | undefined;
   try {
     if (server.transport === "http") {
@@ -534,10 +573,7 @@ export async function gatewayDescribe(
     .join("\n\n");
 }
 
-export interface GatewayResult {
-  content: unknown[];
-  isError?: boolean;
-}
+export type GatewayResult = CallToolResult;
 
 export async function gatewayCall(
   cfg: OpenMoatConfig,
@@ -595,10 +631,9 @@ export async function gatewayCall(
         evict(poolKey);
       }
     );
-    const isError = result.isError === true;
-    let content = entry.redactor.redact(
-      (result.content as unknown[] | undefined) ?? []
-    );
+    const filtered = filterToolResult(result, entry.redactor);
+    const isError = filtered.isError === true;
+    let content = filtered.content;
     if (isError) {
       content = content.map((block) => {
         if (
@@ -634,9 +669,10 @@ export async function gatewayCall(
     else health.success("tool", toolKey);
     entry.lastUsed = Date.now();
     return {
+      ...filtered,
       content: content.length
         ? content
-        : [{ type: "text", text: "(empty result)" }],
+        : [{ type: "text" as const, text: "(empty result)" }],
       isError,
     };
   } catch (error) {

@@ -1,7 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { McpServer } from "@modelcontextprotocol/server";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
+import {
+  CLIENT_INFO_META_KEY,
+  McpServer,
+  type CallToolResult,
+  type McpRequestContext,
+  type ServerContext,
+} from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { getArchive } from "./archive.js";
 import { compressText } from "./compress.js";
@@ -35,6 +41,69 @@ import { searchToolCatalog } from "./tool-catalog.js";
 import { OPENMOAT_VERSION } from "./version.js";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+
+export interface CallerContext {
+  label: string;
+  source: "trusted-launcher" | "request-client-info" | "unknown";
+  assurance: "local-launcher-asserted" | "transport-self-asserted" | "none";
+  protocolEra: "legacy" | "modern";
+  clientInfo?: { name: string; version?: string };
+}
+
+function requestClientInfo(
+  ctx: ServerContext
+): { name: string; version?: string } | undefined {
+  const envelope = ctx.mcpReq.envelope as
+    | Record<string, unknown>
+    | undefined;
+  const value = envelope?.[CLIENT_INFO_META_KEY];
+  if (value === null || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate.name !== "string" || !candidate.name.trim()) {
+    return undefined;
+  }
+  return {
+    name: candidate.name,
+    ...(typeof candidate.version === "string"
+      ? { version: candidate.version }
+      : {}),
+  };
+}
+
+export function resolveCallerContext(
+  server: McpServer,
+  factoryContext: McpRequestContext,
+  ctx: ServerContext,
+  launcherCaller?: string
+): CallerContext {
+  if (launcherCaller?.trim()) {
+    return {
+      label: launcherCaller,
+      source: "trusted-launcher",
+      assurance: "local-launcher-asserted",
+      protocolEra: factoryContext.era,
+    };
+  }
+  const clientInfo =
+    factoryContext.era === "modern"
+      ? requestClientInfo(ctx)
+      : server.server.getClientVersion();
+  if (clientInfo?.name) {
+    return {
+      label: clientInfo.name,
+      source: "request-client-info",
+      assurance: "transport-self-asserted",
+      protocolEra: factoryContext.era,
+      clientInfo,
+    };
+  }
+  return {
+    label: "unknown",
+    source: "unknown",
+    assurance: "none",
+    protocolEra: factoryContext.era,
+  };
+}
 
 /** Tail the raw usage log (falls back into the rotated generation if the live
  *  file is short). One line per event: ts, agent, tool, and the call target. */
@@ -92,17 +161,22 @@ export function bootstrapPersonalSections(
   return parts;
 }
 
-export async function serve(cfg: OpenMoatConfig): Promise<void> {
+function buildServer(
+  cfg: OpenMoatConfig,
+  factoryContext: McpRequestContext,
+  gatewayRuntime: ReturnType<typeof createGatewayRuntime>,
+  contextStore: ContextStore,
+  getRag: () => Rag,
+  launcherCaller?: string
+): McpServer {
   const server = new McpServer({ name: "openmoat", version: OPENMOAT_VERSION });
-  let rag: Rag | undefined;
-  const getRag = () => (rag ??= new Rag(cfg));
-  const gatewayRuntime = createGatewayRuntime(cfg);
-  const contextStore = new ContextStore(cfg.contextDir);
-
-  // Who is calling: OPENMOAT_CALLER override, else the MCP clientInfo sent by the
-  // harness during initialize. Lazy — clientInfo only exists after the
-  // handshake, and tool handlers always run after it.
-  const agentName = () => process.env.OPENMOAT_CALLER ?? server.server.getClientVersion()?.name ?? "unknown";
+  const agentName = (ctx: ServerContext) =>
+    resolveCallerContext(
+      server,
+      factoryContext,
+      ctx,
+      launcherCaller
+    ).label;
 
   server.registerTool(
     "moat_bootstrap",
@@ -111,7 +185,7 @@ export async function serve(cfg: OpenMoatConfig): Promise<void> {
         "Call at session start. Returns the enabled shared context modules and a summary of the configured MCP registry.",
       inputSchema: {},
     },
-    async () => {
+    async (_args, ctx) => {
       const servers = federatedServers(cfg)
         .map((asset) => asset.value)
         .filter((server) => !server.disabled);
@@ -126,7 +200,7 @@ export async function serve(cfg: OpenMoatConfig): Promise<void> {
       const parts: string[] = [
         `## OpenMoat session
 ${servers.length} configured MCP server(s) are available through tool_search → tool_describe → tool_call. Servers start lazily and remain isolated by working directory. Use moat_health for failures or latency; quarantined servers require the human-only \`moat trust\` command. Optional modules enabled: ${optional.join(", ") || "none"}.`,
-        ...bootstrapPersonalSections(cfg, contextStore, agentName()),
+        ...bootstrapPersonalSections(cfg, contextStore, agentName(ctx)),
       ];
       if (cfg.features.skills) {
         const skills = federatedSkills(cfg);
@@ -150,7 +224,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
           k: z.number().int().min(1).max(20).optional(),
         },
       },
-      async ({ query, k }) => {
+      async ({ query, k }, ctx) => {
         const activeRag = getRag();
         await activeRag.index();
         const hits = (await activeRag.search(query, (k ?? 6) * 3))
@@ -159,12 +233,12 @@ ${servers.length} configured MCP server(s) are available through tool_search →
               !path
                 .resolve(hit.file)
                 .startsWith(`${path.resolve(cfg.contextDir)}${path.sep}`) ||
-              contextStore.owns(agentName(), hit.file)
+              contextStore.owns(agentName(ctx), hit.file)
           )
           .slice(0, k ?? 6);
         logUsage(cfg, {
           tool: "rag_search",
-          agent: agentName(),
+          agent: agentName(ctx),
           query,
           topScore: hits[0]?.score ?? 0,
         });
@@ -188,7 +262,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         "Find the right MCP tool across all authorized servers by describing what you need. Searches the human-refreshed tool catalog; use the human-only `moat mcp refresh` command if it is stale.",
       inputSchema: { query: z.string(), k: z.number().int().min(1).max(15).optional() },
     },
-    async ({ query, k }) => {
+    async ({ query, k }, ctx) => {
       const { toolsDir } = catalogDirs(cfg);
       // Core discovery is deterministic lexical ranking over a human-refreshed
       // catalog. It never loads embeddings, contacts a model, or turns on RAG.
@@ -207,7 +281,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         }
         return authorizeGateway(
           cfg,
-          agentName(),
+          agentName(ctx),
           serverName,
           toolName,
           asset.value.zone ?? "default"
@@ -220,7 +294,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         const isFlaky = (h: { heading: string }) => flaky.has(h.heading.split("›")[0]?.trim() ?? "");
         hits = [...hits.filter((h) => !isFlaky(h)), ...hits.filter(isFlaky)];
       }
-      logUsage(cfg, { tool: "tool_search", agent: agentName(), query, topScore: hits[0]?.score ?? 0 });
+      logUsage(cfg, { tool: "tool_search", agent: agentName(ctx), query, topScore: hits[0]?.score ?? 0 });
       if (!hits.length) return text("No tool matches. Ask a human to run `moat mcp refresh` if the catalog is stale.");
       // Collision handling: duplicate tool names (fetch, search, click, query,
       // list_issues…) score near-identically under FTS, so without this the
@@ -245,8 +319,8 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         "Get full input schemas for a registry server's tools (all, or one by name). Use after tool_search, before tool_call.",
       inputSchema: { server: z.string(), tool: z.string().optional() },
     },
-    async ({ server: srv, tool }) => {
-      const agent = agentName();
+    async ({ server: srv, tool }, ctx) => {
+      const agent = agentName(ctx);
       try {
         const result = await gatewayRuntime.describe(srv, tool, agent);
         logUsage(cfg, { tool: "tool_describe", agent, server: srv, target: tool });
@@ -270,9 +344,9 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         cwd: z.string().optional(),
       },
     },
-    async ({ server: srv, tool, arguments: args, cwd }) => {
+    async ({ server: srv, tool, arguments: args, cwd }, ctx) => {
       const t0 = Date.now();
-      const agent = agentName();
+      const agent = agentName(ctx);
       let r;
       try {
         r = await gatewayRuntime.call(
@@ -297,9 +371,8 @@ ${servers.length} configured MCP server(s) are available through tool_search →
       // still oversized and hand back a retrieval hash instead of destroying it.
       let savedChars = 0;
       let archived: string | null = null;
-      const content = r.content.map((c) => {
-        const block = c as { type?: string; text?: string };
-        if (block?.type !== "text" || typeof block.text !== "string") return c;
+      const content: CallToolResult["content"] = r.content.map((block) => {
+        if (block.type !== "text") return block;
         const { text: compressed, saved } = compressText(block.text);
         savedChars += saved;
         let text = compressed;
@@ -322,7 +395,8 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         savedChars,
         archived,
       });
-      return { content, isError: r.isError } as { content: { type: "text"; text: string }[]; isError?: boolean };
+      const result: CallToolResult = { ...r, content };
+      return result;
     }
   );
 
@@ -404,7 +478,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         "Self-evaluation: report a gateway miss you noticed — e.g. you did something the hard way and later realized a gateway tool existed, or a task category that should trigger tool_search but didn't. Creates/reinforces a learned instinct; instincts above 0.5 confidence are auto-published into every agent's instructions on next sync.",
       inputSchema: { observation: z.string(), server: z.string().optional() },
     },
-    async ({ observation, server: srv }) => {
+    async ({ observation, server: srv }, ctx) => {
       // Same templated shape as evaluate.ts rules: agent prose becomes quoted
       // DATA inside a fixed template, never free-form text that publishes
       // verbatim into AGENTS.md.
@@ -422,7 +496,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
       if (isAtFreeSelfReportCap(cfg, id)) {
         return text("instinct rejected: too many unattributed self-reports already recorded — pass `server` to attribute the miss to a registry server (one instinct per server).");
       }
-      const reporter = agentName();
+      const reporter = agentName(ctx);
       if (hasRecentSelfReport(cfg, id, reporter)) {
         return text(`instinct rejected: '${reporter}' already supplied recent evidence for '${id}'; independent evidence is required.`);
       }
@@ -475,8 +549,8 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         "Preserve bounded context for the next session launched with the same caller identity. Notes are isolated by caller and labeled as untrusted agent-authored data.",
       inputSchema: { title: z.string(), content: z.string() },
     },
-    async ({ title, content }) => {
-      const saved = contextStore.save(agentName(), title, content);
+    async ({ title, content }, ctx) => {
+      const saved = contextStore.save(agentName(ctx), title, content);
       if (cfg.features.rag) await getRag().index();
       return text(
         `saved caller-scoped context ${saved.relativePath} (indexed for rag_search)`
@@ -491,8 +565,8 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         "Read the most recent context notes written by this same caller identity (default 3).",
       inputSchema: { n: z.number().int().min(1).max(10).optional() },
     },
-    async ({ n }) => {
-      const notes = contextStore.latest(agentName(), n ?? 3);
+    async ({ n }, ctx) => {
+      const notes = contextStore.latest(agentName(ctx), n ?? 3);
       if (!notes.length) return text("No caller-scoped context notes yet.");
       return text(
         notes
@@ -598,8 +672,33 @@ ${servers.length} configured MCP server(s) are available through tool_search →
     }
   );
 
-  await server.connect(new StdioServerTransport());
-  console.error("openmoat MCP server running (stdio)");
+  return server;
+}
+
+export async function serve(cfg: OpenMoatConfig): Promise<void> {
+  let rag: Rag | undefined;
+  const getRag = () => (rag ??= new Rag(cfg));
+  const gatewayRuntime = createGatewayRuntime(cfg);
+  const contextStore = new ContextStore(cfg.contextDir);
+  const launcherCaller = process.env.OPENMOAT_CALLER;
+
+  serveStdio(
+    (factoryContext) =>
+      buildServer(
+        cfg,
+        factoryContext,
+        gatewayRuntime,
+        contextStore,
+        getRag,
+        launcherCaller
+      ),
+    {
+      legacy: "serve",
+      onerror: (error) =>
+        console.error(`openmoat: MCP stdio error: ${error.message}`),
+    }
+  );
+  console.error("openmoat MCP server running (stdio, dual-era)");
 
   // Pre-warm hot servers so the first real tool_call is warm (not paying
   // npx/uvx cold-start). Fire-and-forget; opt-in via cfg.prewarm.
@@ -616,7 +715,6 @@ ${servers.length} configured MCP server(s) are available through tool_search →
     console.error(`openmoat: shutdown, reaped ${reaped.map((r) => `${r.server}:[${r.pids.join(",")}]`).join(" ") || "nothing"}`);
     process.exit(0);
   };
-  server.server.onclose = shutdown;
   process.stdin.on("end", shutdown);
   process.stdin.on("close", shutdown);
   process.on("SIGTERM", shutdown);
