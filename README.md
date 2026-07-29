@@ -1,5 +1,9 @@
 # OpenMoat
 
+[![CI](https://github.com/josephkehan-prog/OpenMoat/actions/workflows/ci.yml/badge.svg)](https://github.com/josephkehan-prog/OpenMoat/actions/workflows/ci.yml)
+[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 OpenMoat is the local security gateway for MCP: one TypeScript process lets
 multiple local AI clients safely discover and call approved MCP servers through
 deny-by-default policy, quarantine, secret redaction, bounded execution, and
@@ -8,7 +12,10 @@ deterministic cleanup.
 It supports outward stdio clients and downstream stdio or Streamable HTTP
 servers across MCP 2025-11-25 and stateless MCP 2026-07-28.
 
-## Scope
+> **Status:** v1 release candidate. The source release is verified; the npm
+> package has not been published yet.
+
+## What OpenMoat does
 
 OpenMoat v1 does one job: protect and multiplex local MCP access.
 
@@ -29,27 +36,21 @@ handoffs, RAG, embeddings, skills, plugins, instincts, federation, evaluation,
 backups, or discovery marketplaces. Client configuration is deliberately
 documentation-only and non-mutating.
 
-## Requirements
+## Install from source
 
 - Node.js 22 or newer
+- Git
 - A local MCP client that can launch a stdio server
 
-## Install
-
-```sh
-npm install --global openmoat
-moat init ~/.config/openmoat
-export OPENMOAT_FILE="$HOME/.config/openmoat/Moatfile"
-moat validate
-moat doctor
-```
-
-For a source checkout:
-
-```sh
+```bash
+git clone https://github.com/josephkehan-prog/OpenMoat.git
+cd OpenMoat
 npm ci
 npm run build
-node dist/cli.js init /tmp/openmoat-config
+node dist/cli.js init ~/.config/openmoat
+export OPENMOAT_FILE="$HOME/.config/openmoat/Moatfile"
+node dist/cli.js validate
+node dist/cli.js doctor
 ```
 
 Configuration precedence is `--file`, then `OPENMOAT_FILE`, then
@@ -82,11 +83,12 @@ gateway:
 
 Then review and approve it:
 
-```sh
-moat validate
-moat trust files
-moat catalog --refresh
-moat doctor
+```bash
+node dist/cli.js validate
+node dist/cli.js trust files
+node dist/cli.js catalog --refresh
+node dist/cli.js doctor
+node dist/cli.js serve
 ```
 
 `trust` is a human-only CLI mutation. No agent-facing MCP tool can approve a
@@ -108,8 +110,8 @@ Pre-provisioned headers use unresolved placeholders:
 Put `REMOTE_MCP_TOKEN=...` in the ignored, mode-0600 `secrets.env`. For
 authorization-code OAuth with PKCE, omit `headers` and run:
 
-```sh
-moat auth remote
+```bash
+node dist/cli.js auth remote
 ```
 
 OAuth tokens, registrations, PKCE verifier, and discovery state are stored
@@ -125,8 +127,8 @@ a stable local policy label:
 {
   "mcpServers": {
     "openmoat": {
-      "command": "moat",
-      "args": ["serve"],
+      "command": "node",
+      "args": ["/absolute/path/to/OpenMoat/dist/cli.js", "serve"],
       "env": {
         "OPENMOAT_FILE": "/absolute/path/to/Moatfile",
         "OPENMOAT_CALLER": "codex"
@@ -141,7 +143,7 @@ requests use per-request `clientInfo` and legacy requests use initialized
 `clientInfo`. These are policy labels, not cryptographic identities; processes
 running as the same operating-system user are not isolated from one another.
 
-## Commands and tools
+## Command surface
 
 Human CLI: `init`, `validate`, `serve`, `doctor`, `auth`, `trust`, `catalog`,
 `usage`, and `list`.
@@ -158,16 +160,22 @@ separate account, container, or sandbox wrapper for untrusted code.
 See [SECURITY.md](SECURITY.md) and
 [docs/threat-model.md](docs/threat-model.md).
 
-## Release status
+Report vulnerabilities privately as described in
+[SECURITY.md](SECURITY.md). Do not open a public issue containing credentials,
+tokens, or private configuration.
 
-The TypeScript repository is the sole supported implementation. The Go, Rust,
-and Python experiments are historical comparison evidence and are not part of
-the v1 product or package.
+## Development
 
-Run the complete local release gate with:
-
-```sh
+```bash
+npm test
+npm run test:coverage
 npm run verify
 ```
 
-MIT licensed.
+Contributions use signed Conventional Commits and test-driven RED/GREEN
+checkpoints. See [CONTRIBUTING.md](CONTRIBUTING.md) and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Joseph Han.
