@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,6 +11,14 @@ import {
   searchCatalog,
 } from "../dist/catalog.js";
 import { FileOAuthProvider } from "../dist/oauth.js";
+
+async function unusedPort() {
+  const server = http.createServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
 
 function cfg(root) {
   return {
@@ -134,6 +143,68 @@ test("OAuth callback port validation rejects unsafe values", () => {
     );
     assert.throws(() => provider.redirectUrl, /1024 through 65535/);
   } finally {
+    if (previous === undefined) delete process.env.OPENMOAT_OAUTH_PORT;
+    else process.env.OPENMOAT_OAUTH_PORT = previous;
+  }
+});
+
+test("OAuth state is random, enforced once, and closes the callback listener", async () => {
+  const previous = process.env.OPENMOAT_OAUTH_PORT;
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-oauth-state-"));
+  let provider;
+  try {
+    const firstPort = await unusedPort();
+    process.env.OPENMOAT_OAUTH_PORT = String(firstPort);
+    provider = new FileOAuthProvider(root, "remote", true, () => {});
+    const firstState = provider.state();
+    const activeState = provider.state();
+    assert.match(activeState, /^[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(activeState, firstState);
+    await assert.rejects(
+      provider.redirectToAuthorization(
+        new URL(`http://issuer.invalid/authorize?state=wrong`)
+      ),
+      /state mismatch/
+    );
+
+    await provider.redirectToAuthorization(
+      new URL(
+        `http://issuer.invalid/authorize?state=${encodeURIComponent(activeState)}`
+      )
+    );
+    const mismatch = provider.waitForCode(1_000);
+    const mismatchResponse = await fetch(
+      `http://127.0.0.1:${firstPort}/callback?code=attacker&state=wrong`
+    );
+    assert.equal(mismatchResponse.status, 400);
+    await assert.rejects(mismatch, /state mismatch/);
+    await assert.rejects(
+      fetch(`http://127.0.0.1:${firstPort}/callback`),
+      /fetch failed/
+    );
+
+    const secondPort = await unusedPort();
+    process.env.OPENMOAT_OAUTH_PORT = String(secondPort);
+    provider = new FileOAuthProvider(root, "remote", true, () => {});
+    const state = provider.state();
+    await provider.redirectToAuthorization(
+      new URL(
+        `http://issuer.invalid/authorize?state=${encodeURIComponent(state)}`
+      )
+    );
+    const code = provider.waitForCode(1_000);
+    const successResponse = await fetch(
+      `http://127.0.0.1:${secondPort}/callback?code=approved&state=${encodeURIComponent(state)}`
+    );
+    assert.equal(successResponse.status, 200);
+    assert.equal(await code, "approved");
+    await assert.rejects(
+      fetch(`http://127.0.0.1:${secondPort}/callback`),
+      /fetch failed/
+    );
+  } finally {
+    provider?.closeCallbackServer();
+    fs.rmSync(root, { recursive: true, force: true });
     if (previous === undefined) delete process.env.OPENMOAT_OAUTH_PORT;
     else process.env.OPENMOAT_OAUTH_PORT = previous;
   }
