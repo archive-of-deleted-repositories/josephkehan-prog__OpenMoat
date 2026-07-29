@@ -18,6 +18,15 @@ run("npm", ["run", "test:coverage"]);
 run("npm", ["audit"]);
 run("gitleaks", ["detect", "--no-banner", "--redact"]);
 run("./scripts/update-spec.sh", []);
+run("python3", [
+  "vendor/spec/fixtures/official/run.py",
+  "--binary",
+  "node",
+  "--binary",
+  "dist/cli.js",
+  "--file",
+  "vendor/spec/fixtures/official/Moatfile",
+]);
 
 const tracked = spawnSync("git", ["ls-files", "-z"], { encoding: "utf8" })
   .stdout.split("\0")
@@ -51,4 +60,3 @@ if (packedFiles.some((file) => /(?:^|\/)(?:state|secrets\.env|\.env)(?:\/|$)/.te
   throw new Error("package contains runtime state or secrets");
 }
 console.log(`package inspection: ${packedFiles.length} files`);
-
