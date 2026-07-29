@@ -6,9 +6,11 @@ import test from "node:test";
 import { ContextStore, contextNamespace } from "../dist/context-store.js";
 
 test("context namespaces are stable and cannot escape the handoff root", () => {
-  assert.equal(contextNamespace("Codex Desktop"), "codex-desktop");
-  assert.equal(contextNamespace("../../"), "unknown");
+  assert.match(contextNamespace("Codex Desktop"), /^codex-desktop--[a-f0-9]{16}$/);
+  assert.match(contextNamespace("../../"), /^unknown--[a-f0-9]{16}$/);
   assert.doesNotMatch(contextNamespace("agent/../../../secret"), /[/.]/);
+  assert.notEqual(contextNamespace("team/a"), contextNamespace("team-a"));
+  assert.notEqual(contextNamespace("TEAM-A"), contextNamespace("team-a"));
 });
 
 test("saved context is caller-scoped, bounded, sanitized, and provenance-labeled", () => {
@@ -45,6 +47,27 @@ test("callers can read only their own latest context notes", () => {
   assert.equal(codex.length, 1);
   assert.match(codex[0].content, /codex-only/);
   assert.doesNotMatch(codex[0].content, /claude-only/);
+});
+
+test("distinct caller labels that share a readable slug cannot cross-read", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-context-"));
+  const store = new ContextStore(root);
+  store.save("team/a", "Slash label", "slash-only");
+  store.save("team-a", "Dash label", "dash-only");
+
+  const slash = store.latest("team/a", 10);
+  const dash = store.latest("team-a", 10);
+
+  assert.equal(slash.length, 1);
+  assert.equal(dash.length, 1);
+  assert.match(slash[0].content, /slash-only/);
+  assert.doesNotMatch(slash[0].content, /dash-only/);
+  assert.match(dash[0].content, /dash-only/);
+  assert.doesNotMatch(dash[0].content, /slash-only/);
+  assert.notEqual(
+    path.dirname(slash[0].relativePath),
+    path.dirname(dash[0].relativePath)
+  );
 });
 
 test("per-caller context quotas fail closed", () => {

@@ -24,15 +24,32 @@ function buildServer() {
       structuredContent: {
         value,
         nested: { secret: process.env.FIXTURE_SECRET ?? "" },
+        [process.env.FIXTURE_SECRET ?? ""]: "secret-bearing-key",
       },
       _meta: {
         "example.test/safe": {
           value,
           secret: process.env.FIXTURE_SECRET ?? "",
+          [process.env.FIXTURE_SECRET ?? ""]: "secret-bearing-key",
         },
         [SERVER_INFO_META_KEY]: {
           name: "untrusted-downstream-identity",
           version: "9.9.9",
+        },
+      },
+    })
+  );
+  server.registerTool(
+    "oversized_envelope",
+    {},
+    async () => ({
+      content: [{ type: "text", text: "small text result" }],
+      structuredContent: {
+        payload: "structured-".repeat(2000),
+      },
+      _meta: {
+        "example.test/large": {
+          payload: "metadata-".repeat(2000),
         },
       },
     })

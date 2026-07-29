@@ -264,8 +264,86 @@ for (const [outerEra, downstreamMode] of [
         response.result._meta["io.modelcontextprotocol/serverInfo"]?.name,
         "untrusted-downstream-identity"
       );
+      assert.doesNotMatch(JSON.stringify(response.result), /top-secret-value/);
     } finally {
       await stopOpenMoat(instance);
     }
   });
 }
+
+test("modern structured envelopes are bounded and archived for retrieval", async () => {
+  const instance = startOpenMoat((root) =>
+    gatewayMoatfile(root, "modern-only")
+  );
+  try {
+    await discoverModern(instance);
+    const response = await request(
+      instance.child,
+      instance.lines,
+      2,
+      "tools/call",
+      {
+        name: "tool_call",
+        arguments: {
+          server: "fixture",
+          tool: "oversized_envelope",
+          arguments: {},
+        },
+        _meta: modernMeta("outer-client"),
+      }
+    );
+
+    assert.equal(response.error, undefined);
+    assert.ok(JSON.stringify(response.result).length < 12_000);
+    assert.match(
+      response.result.content[0].text,
+      /structured envelope archived/
+    );
+    assert.match(
+      response.result.structuredContent.openmoatArchivedResult.hash,
+      /^[a-f0-9]{16}$/
+    );
+    assert.equal(
+      response.result._meta["openmoat.dev/archivedResult"].hash,
+      response.result.structuredContent.openmoatArchivedResult.hash
+    );
+  } finally {
+    await stopOpenMoat(instance);
+  }
+});
+
+test("moat_usage cannot expose another caller's raw search telemetry", async () => {
+  const instance = startOpenMoat((root) => baseMoatfile(root));
+  try {
+    await discoverModern(instance, "team-b");
+    const state = path.join(instance.root, "state");
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(
+      path.join(state, "usage.jsonl"),
+      JSON.stringify({
+        ts: "2026-07-29T00:00:00.000Z",
+        agent: "team/a",
+        tool: "tool_search",
+        query: "private acquisition roadmap",
+      }) + "\n"
+    );
+
+    const response = await request(
+      instance.child,
+      instance.lines,
+      2,
+      "tools/call",
+      {
+        name: "moat_usage",
+        arguments: { agent: "team/a", recent: 10 },
+        _meta: modernMeta("team-b"),
+      }
+    );
+    assert.equal(response.error, undefined);
+    const output = response.result.content[0].text;
+    assert.doesNotMatch(output, /team\/a/);
+    assert.doesNotMatch(output, /private acquisition roadmap/);
+  } finally {
+    await stopOpenMoat(instance);
+  }
+});

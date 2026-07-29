@@ -89,7 +89,16 @@ test("untrusted tool metadata is sanitized, bounded, and labeled with provenance
 test("secret redaction traverses nested MCP output without mutating the input", () => {
   const original = {
     content: [{ type: "text", text: "token=secret-value" }],
-    nested: { error: "secret-value" },
+    structuredContent: {
+      "secret-value": {
+        "prefix-secret-value-suffix": "secret-value",
+      },
+    },
+    _meta: {
+      "example.test/secret-value": {
+        error: "secret-value",
+      },
+    },
   };
   const redactor = new SecretRedactor(["secret-value"]);
 
@@ -97,9 +106,19 @@ test("secret redaction traverses nested MCP output without mutating the input", 
 
   assert.deepEqual(redacted, {
     content: [{ type: "text", text: "token=[REDACTED]" }],
-    nested: { error: "[REDACTED]" },
+    structuredContent: {
+      "[REDACTED]": {
+        "prefix-[REDACTED]-suffix": "[REDACTED]",
+      },
+    },
+    _meta: {
+      "example.test/[REDACTED]": {
+        error: "[REDACTED]",
+      },
+    },
   });
   assert.equal(original.content[0].text, "token=secret-value");
+  assert.doesNotMatch(JSON.stringify(redacted), /secret-value/);
 });
 
 test("deadlines reject with a stable timeout code and run cleanup", async () => {
