@@ -241,7 +241,10 @@ function buildServer(
         "Read current input schemas from one authorized downstream MCP server.",
       inputSchema: {
         server: z.string().min(1).max(128),
-        tool: z.string().min(1).max(256).optional(),
+        tool: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/)
+          .optional(),
       },
     },
     async ({ server: name, tool }, ctx) =>
@@ -255,7 +258,9 @@ function buildServer(
         "Call one authorized downstream MCP tool. Optional cwd is constrained by the server's declared cwdRoots.",
       inputSchema: {
         server: z.string().min(1).max(128),
-        tool: z.string().min(1).max(256),
+        tool: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/),
         arguments: z.record(z.string(), z.unknown()).optional(),
         cwd: z.string().max(4096).optional(),
       },

@@ -40,6 +40,7 @@ const secretsCache = new Map<
   string,
   { mtimeMs: number; secrets: Record<string, string> }
 >();
+const MAX_SECRETS_BYTES = 1024 * 1024;
 
 export interface LoadSecretsOptions {
   enforcePermissions?: boolean;
@@ -51,8 +52,14 @@ export function loadSecrets(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   if (!fs.existsSync(secretsEnvPath)) return out;
+  const stat = fs.statSync(secretsEnvPath);
+  if (stat.size > MAX_SECRETS_BYTES) {
+    throw new Error(
+      `secrets file exceeds ${MAX_SECRETS_BYTES} bytes`
+    );
+  }
   if (options.enforcePermissions ?? true) {
-    if ((fs.statSync(secretsEnvPath).mode & 0o077) !== 0) {
+    if ((stat.mode & 0o077) !== 0) {
       fs.chmodSync(secretsEnvPath, 0o600);
     }
   }

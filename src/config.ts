@@ -8,6 +8,7 @@ import { parse } from "yaml";
 import type { ServerDef } from "./registry.js";
 
 export const CONFIG_ENV = "OPENMOAT_FILE";
+const MAX_CONFIG_BYTES = 1024 * 1024;
 
 export interface GatewayPolicyRule {
   allow?: string[];
@@ -227,6 +228,11 @@ function validateSemantics(document: MoatfileDocument): void {
           `invalid Moatfile: http server '${name}' has an invalid url`
         );
       }
+      if (url.username || url.password) {
+        throw new Error(
+          `invalid Moatfile: http server '${name}' url must not contain embedded credentials`
+        );
+      }
       if (
         url.protocol !== "https:" &&
         !["localhost", "127.0.0.1", "::1"].includes(url.hostname)
@@ -322,6 +328,12 @@ export function loadConfigFile(input: string): OpenMoatConfig {
   const file = path.resolve(expandHome(input));
   let document: unknown;
   try {
+    const bytes = fs.statSync(file).size;
+    if (bytes > MAX_CONFIG_BYTES) {
+      throw new Error(
+        `Moatfile exceeds ${MAX_CONFIG_BYTES} bytes`
+      );
+    }
     document = parse(fs.readFileSync(file, "utf8"));
   } catch (error) {
     throw new Error(

@@ -38,14 +38,27 @@ function callbackPort(): number {
 
 /** Open a URL in the default browser, cross-platform, without ever throwing —
  *  auth must still be completable by pasting the printed URL. */
+export function browserLaunchCommand(
+  platform: NodeJS.Platform,
+  url: string
+): { command: string; args: string[] } {
+  if (platform === "darwin") return { command: "open", args: [url] };
+  if (platform === "win32") {
+    return {
+      command: "rundll32.exe",
+      args: ["url.dll,FileProtocolHandler", url],
+    };
+  }
+  return { command: "xdg-open", args: [url] };
+}
+
 function openBrowser(url: string): void {
-  const [cmd, args] =
-    process.platform === "darwin"
-      ? ["open", [url]]
-      : process.platform === "win32"
-        ? ["cmd", ["/c", "start", "", url]]
-        : ["xdg-open", [url]];
-  const child = spawn(cmd, args as string[], { stdio: "ignore", detached: true });
+  const launch = browserLaunchCommand(process.platform, url);
+  const child = spawn(launch.command, launch.args, {
+    stdio: "ignore",
+    detached: true,
+    shell: false,
+  });
   child.on("error", (e) => {
     console.error(`openmoat: could not open a browser (${e.message}) — open this URL manually:\n  ${url}`);
   });

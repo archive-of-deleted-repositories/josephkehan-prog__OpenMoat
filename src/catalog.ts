@@ -3,6 +3,10 @@ import path from "node:path";
 import type { OpenMoatConfig } from "./config.js";
 import type { GatewayRuntime } from "./gateway-runtime.js";
 import {
+  MAX_DESCRIBED_TOOLS,
+  TOOL_NAME_PATTERN,
+} from "./tool-metadata.js";
+import {
   rankToolCatalog,
   type ToolCatalogEntry,
   type ToolCatalogHit,
@@ -24,7 +28,9 @@ function parseDescription(
   server: string,
   description: string
 ): ToolCatalogEntry[] {
-  const matches = [...description.matchAll(/^Tool: ([^\n]+)$/gm)];
+  const matches = [...description.matchAll(/^Tool: ([^\n]+)$/gm)]
+    .filter((match) => TOOL_NAME_PATTERN.test(match[1].trim()))
+    .slice(0, MAX_DESCRIBED_TOOLS);
   return matches.map((match, index) => {
     const start = match.index ?? 0;
     const end = matches[index + 1]?.index ?? description.length;

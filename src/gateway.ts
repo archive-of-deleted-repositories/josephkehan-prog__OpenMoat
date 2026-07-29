@@ -18,10 +18,14 @@ import { requireGatewayAuthorization } from "./policy.js";
 import { descendantPids, killProcessTree } from "./process-tree.js";
 import {
   resolveWorkingDirectory,
-  sanitizeMetadata,
   SecretRedactor,
   withDeadline,
 } from "./runtime-security.js";
+import {
+  boundedToolNames,
+  formatToolMetadata,
+  safeToolNames,
+} from "./tool-metadata.js";
 import { isToolNotFoundError, suggestToolName } from "./tool-policy.js";
 import {
   loadSecretsCached,
@@ -30,7 +34,6 @@ import {
   type ServerDef,
 } from "./registry.js";
 import { OPENMOAT_VERSION } from "./version.js";
-
 interface PoolEntry {
   client: Client;
   serverId: string;
@@ -626,25 +629,15 @@ export async function gatewayDescribe(
       evict(entry.cwd ? `${asset.id}@${entry.cwd}` : asset.id);
     }
   );
-  const picked = toolName
-    ? result.tools.filter((tool) => tool.name === toolName)
-    : result.tools;
-  if (!picked.length) {
-    return `No tool '${toolName}' on '${serverName}'. Available: ${result.tools
-      .map((tool) => tool.name)
-      .join(", ")}`;
-  }
-  return picked
-    .map((tool) =>
-      sanitizeMetadata(
-        `Tool: ${tool.name}\n${tool.description ?? ""}\nInput schema: ${JSON.stringify(tool.inputSchema)}`,
-        {
-          server: serverName,
-          trust: asset.value.trusted === false ? "quarantined" : "trusted",
-        }
-      )
-    )
-    .join("\n\n");
+  return formatToolMetadata(
+    result.tools,
+    serverName,
+    {
+      server: serverName,
+      trust: asset.value.trusted === false ? "quarantined" : "trusted",
+    },
+    toolName
+  );
 }
 
 export type GatewayResult = CallToolResult;
@@ -791,7 +784,7 @@ async function notFoundHelp(
 ): Promise<string> {
   let names: string[] = [];
   try {
-    names = ((await client.listTools()).tools ?? []).map((tool) => tool.name);
+    names = safeToolNames((await client.listTools()).tools ?? []);
   } catch {
     return `${original}\n\n'${toolName}' is not a tool on '${serverName}', and the tool list could not be read. Run tool_search.`;
   }
@@ -801,7 +794,7 @@ async function notFoundHelp(
       .map((name) => `${serverName}›${name}`)
       .join(", ")}?`;
   }
-  return `No tool '${toolName}' on '${serverName}'. Available: ${
-    names.join(", ") || "(none)"
-  }.`;
+  return `No tool '${toolName}' on '${serverName}'. Available: ${boundedToolNames(
+    names
+  )}.`;
 }
