@@ -232,37 +232,6 @@ export class Health {
     return lines.join("\n");
   }
 
-  report(): string {
-    const stats = this.db
-      .prepare("SELECT server, tool, calls, errors, total_ms FROM stats ORDER BY calls DESC LIMIT 30")
-      .all() as unknown as { server: string; tool: string; calls: number; errors: number; total_ms: number }[];
-    const breakers = this.db
-      .prepare("SELECT scope, key, failures, last_at, last_error FROM breakers ORDER BY last_at DESC")
-      .all() as unknown as { scope: string; key: string; failures: number; last_at: number; last_error: string }[];
-    const now = Date.now();
-    const lines: string[] = [];
-    if (breakers.length) {
-      lines.push("BREAKERS:");
-      for (const b of breakers) {
-        const open = b.failures >= THRESHOLD[b.scope] && now - b.last_at < COOLDOWN_MS[b.scope];
-        lines.push(
-          `  [${open ? "OPEN" : "watching"}] ${b.scope} ${b.key} — ${b.failures} consecutive failure(s); last: ${b.last_error.slice(0, 80)}`
-        );
-      }
-    } else {
-      lines.push("BREAKERS: none — all assets healthy");
-    }
-    if (stats.length) {
-      lines.push("", "CALL STATS (top 30):");
-      for (const s of stats) {
-        const avg = s.calls ? Math.round(s.total_ms / s.calls) : 0;
-        const errPct = s.calls ? Math.round((s.errors / s.calls) * 100) : 0;
-        lines.push(`  ${s.server} › ${s.tool}: ${s.calls} call(s), ${errPct}% errors, ~${avg}ms avg`);
-      }
-    }
-    return lines.join("\n");
-  }
-
   close(): void {
     this.db.close();
   }

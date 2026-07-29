@@ -1,1 +1,0 @@
-{"version":1,"id":"orphan-cleanup","driver":"mcp","operation":"orphan_cleanup","input":{"server":{"mode":"spawn-descendant"}},"expected":{"ok":true,"childrenRemaining":0}}

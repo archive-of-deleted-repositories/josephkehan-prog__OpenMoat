@@ -1,2 +1,0 @@
-"""OpenMoat conformance runner."""
-

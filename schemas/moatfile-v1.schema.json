@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openmoat.dev/schema/moatfile-v1.schema.json",
+  "title": "OpenMoat v1 Moatfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "gateway"],
+  "properties": {
+    "apiVersion": { "const": "openmoat.dev/v1" },
+    "kind": { "const": "Moatfile" },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": { "type": "string", "minLength": 1 },
+        "secrets": { "type": "string", "minLength": 1 }
+      }
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["callers", "servers"],
+      "properties": {
+        "callers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "allow": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "deny": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true
+              },
+              "zone": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "zones": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "allowMixedRisk": { "type": "boolean" }
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxPools": { "type": "integer", "minimum": 1, "maximum": 256 },
+            "maxPoolsPerServer": { "type": "integer", "minimum": 1, "maximum": 64 },
+            "idleTimeoutMs": { "type": "integer", "minimum": 1000, "maximum": 86400000 }
+          }
+        },
+        "archives": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxBlobBytes": { "type": "integer", "minimum": 12000, "maximum": 16777216 },
+            "maxCallerBytes": { "type": "integer", "minimum": 12000, "maximum": 268435456 },
+            "maxCallerEntries": { "type": "integer", "minimum": 1, "maximum": 4096 },
+            "ttlDays": { "type": "integer", "minimum": 1, "maximum": 90 }
+          }
+        },
+        "servers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "transport": { "enum": ["stdio", "http"] },
+              "command": { "type": "string", "minLength": 1 },
+              "args": {
+                "type": "array",
+                "items": { "type": "string", "maxLength": 8192 },
+                "maxItems": 256
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+                "additionalProperties": { "type": "string", "maxLength": 65536 }
+              },
+              "inheritEnv": {
+                "type": "array",
+                "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+                "uniqueItems": true,
+                "maxItems": 128
+              },
+              "url": { "type": "string", "minLength": 1, "maxLength": 8192 },
+              "headers": {
+                "type": "object",
+                "propertyNames": { "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$" },
+                "additionalProperties": { "type": "string", "maxLength": 65536 }
+              },
+              "cwd": { "type": "string", "minLength": 1 },
+              "cwdRoots": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "uniqueItems": true,
+                "maxItems": 64
+              },
+              "requires": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["bin"],
+                  "properties": {
+                    "bin": { "type": "string", "pattern": "^[A-Za-z0-9._+-]+$" },
+                    "hint": { "type": "string", "maxLength": 500 }
+                  }
+                }
+              },
+              "capabilities": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "enum": [
+                    "public-read",
+                    "sensitive-read",
+                    "filesystem-write",
+                    "network-egress",
+                    "process-control",
+                    "secrets"
+                  ]
+                }
+              },
+              "zone": { "type": "string", "minLength": 1 },
+              "trust": { "enum": ["trusted", "quarantined", "disabled"] },
+              "startupTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000 },
+              "callTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 3600000 },
+              "limits": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "failureThreshold": { "type": "integer", "minimum": 1, "maximum": 100 },
+                  "resetAfterMs": { "type": "integer", "minimum": 1000, "maximum": 86400000 },
+                  "maxConcurrentCalls": { "type": "integer", "minimum": 1, "maximum": 128 }
+                }
+              },
+              "notes": { "type": "string", "maxLength": 2000 }
+            }
+          }
+        }
+      }
+    },
+    "prewarm": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "maxItems": 64
+    }
+  }
+}

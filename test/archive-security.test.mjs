@@ -5,24 +5,41 @@ import path from "node:path";
 import test from "node:test";
 import { Archive } from "../dist/archive.js";
 
-test("archived tool results are caller-bound, including identical content", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-archive-"));
-  const cfg = { stateDir: path.join(root, "state") };
-  const archive = new Archive(cfg);
-  try {
-    const callerAHash = archive.store("caller-a", "shared sensitive result");
-    const callerBHash = archive.store("caller-b", "shared sensitive result");
+function config(stateDir, overrides = {}) {
+  return {
+    stateDir,
+    archiveLimits: {
+      maxBlobBytes: 1024,
+      maxCallerBytes: 2048,
+      maxCallerEntries: 2,
+      ttlMs: 60_000,
+      ...overrides,
+    },
+  };
+}
 
-    assert.notEqual(callerAHash, callerBHash);
-    assert.equal(archive.fetch("caller-b", callerAHash), null);
-    assert.equal(archive.find("caller-b", callerAHash, "sensitive"), null);
+test("archives use opaque caller-bound handles and private storage", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-archive-"));
+  const stateDir = path.join(root, "state");
+  const archive = new Archive(config(stateDir));
+  try {
+    const handle = archive.store("caller-a", "shared sensitive result");
+    assert.match(handle, /^[a-f0-9]{48}$/);
+    assert.equal(archive.fetch("caller-b", handle), null);
+    assert.equal(archive.find("caller-b", handle, "sensitive"), null);
     assert.equal(
-      archive.fetch("caller-a", callerAHash)?.slice,
+      archive.fetch("caller-a", handle)?.slice,
       "shared sensitive result"
     );
     assert.deepEqual(
-      archive.find("caller-a", callerAHash, "sensitive"),
+      archive.find("caller-a", handle, "sensitive"),
       [{ offset: 0, line: "shared sensitive result" }]
+    );
+    assert.equal(archive.fetch("caller-a", "../escape"), null);
+    assert.equal(fs.statSync(stateDir).mode & 0o077, 0);
+    assert.equal(
+      fs.statSync(path.join(stateDir, "archive.db")).mode & 0o077,
+      0
     );
   } finally {
     archive.close();
@@ -30,15 +47,33 @@ test("archived tool results are caller-bound, including identical content", () =
   }
 });
 
-test("archive state directories and databases are private", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-archive-mode-"));
-  const stateDir = path.join(root, "state");
-  const archive = new Archive({ stateDir });
-  archive.close();
+test("archive enforces byte, entry, paging, and TTL bounds", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-quota-"));
+  const archive = new Archive(
+    config(path.join(root, "state"), {
+      maxBlobBytes: 100,
+      maxCallerBytes: 150,
+      maxCallerEntries: 2,
+      ttlMs: 5,
+    })
+  );
   try {
-    assert.equal(fs.statSync(stateDir).mode & 0o077, 0);
-    assert.equal(fs.statSync(path.join(stateDir, "archive.db")).mode & 0o077, 0);
+    assert.throws(
+      () => archive.store("caller", "x".repeat(101)),
+      /RESULT_TOO_LARGE/
+    );
+    const first = archive.store("caller", "a".repeat(80));
+    const second = archive.store("caller", "b".repeat(80));
+    assert.equal(
+      archive.fetch("caller", first),
+      null,
+      "quota evicts the oldest caller-owned entry"
+    );
+    assert.equal(archive.fetch("caller", second, -10, 1)?.slice.length, 80);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    assert.equal(archive.fetch("caller", second), null);
   } finally {
+    archive.close();
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

@@ -8,6 +8,7 @@ Use test-driven development:
 4. Keep commits signed and use Conventional Commits.
 
 Do not contribute live configuration, secrets, personal paths, runtime state,
-logs, generated catalogs, or machine-specific policy. New public behavior must
-be represented in OpenMoat Spec before implementation-specific code.
-
+logs, generated catalogs, or machine-specific policy. OpenMoat v1 accepts
+changes only within the local TypeScript MCP security-gateway mission. Harness
+configuration adapters, profiles, handoffs, RAG, skills, plugins, federation,
+and other agent-platform features are out of scope.

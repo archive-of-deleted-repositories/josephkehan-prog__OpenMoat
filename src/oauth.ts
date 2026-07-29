@@ -7,21 +7,34 @@
  */
 
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import type { OAuthClientProvider } from "@modelcontextprotocol/client";
 import type {
   OAuthClientInformation,
+  OAuthClientInformationContext,
   OAuthClientInformationFull,
   OAuthClientMetadata,
+  OAuthDiscoveryState,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
 
 // One callback port per machine is a real constraint (DCR registrations pin
 // the redirect_uri), but it must at least be configurable so two OpenMoat setups
 // can coexist: OPENMOAT_OAUTH_PORT overrides.
-const PORT = Number(process.env.OPENMOAT_OAUTH_PORT) || 8090;
+function callbackPort(): number {
+  const raw = process.env.OPENMOAT_OAUTH_PORT;
+  if (!raw) return 8090;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1024 || value > 65535) {
+    throw new Error(
+      "OPENMOAT_OAUTH_PORT must be an integer from 1024 through 65535"
+    );
+  }
+  return value;
+}
 
 /** Open a URL in the default browser, cross-platform, without ever throwing —
  *  auth must still be completable by pasting the printed URL. */
@@ -40,9 +53,11 @@ function openBrowser(url: string): void {
 }
 
 interface Stored {
-  clientInformation?: OAuthClientInformationFull;
-  tokens?: OAuthTokens;
+  clientInformationByIssuer?: Record<string, OAuthClientInformationFull>;
+  tokensByIssuer?: Record<string, OAuthTokens>;
+  lastIssuer?: string;
   codeVerifier?: string;
+  discoveryState?: OAuthDiscoveryState;
 }
 
 export class FileOAuthProvider implements OAuthClientProvider {
@@ -55,6 +70,7 @@ export class FileOAuthProvider implements OAuthClientProvider {
   // an early result instead of dropping it.
   private pendingCode?: string;
   private pendingError?: Error;
+  private waitTimer?: NodeJS.Timeout;
   // CSRF: the `state` the SDK put on the authorization URL. The callback must
   // echo it back, otherwise a different flow's (or an attacker's) code could
   // be fed into this waiting server. Undefined = SDK sent no state; then we
@@ -63,8 +79,13 @@ export class FileOAuthProvider implements OAuthClientProvider {
 
   constructor(stateDir: string, private serverName: string, private interactive: boolean) {
     const dir = path.join(stateDir, "oauth");
-    fs.mkdirSync(dir, { recursive: true });
-    this.file = path.join(dir, `${serverName}.json`);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    const id = crypto
+      .createHash("sha256")
+      .update(serverName)
+      .digest("hex");
+    this.file = path.join(dir, `${id}.json`);
   }
 
   private load(): Stored {
@@ -76,6 +97,7 @@ export class FileOAuthProvider implements OAuthClientProvider {
       // would silently wipe stored tokens — preserve it first.
       try {
         fs.copyFileSync(this.file, `${this.file}.corrupt`);
+        fs.chmodSync(`${this.file}.corrupt`, 0o600);
       } catch {
         /* best-effort */
       }
@@ -85,11 +107,20 @@ export class FileOAuthProvider implements OAuthClientProvider {
   }
 
   private save(patch: Partial<Stored>): void {
-    fs.writeFileSync(this.file, JSON.stringify({ ...this.load(), ...patch }, null, 2), { mode: 0o600 });
+    const temporary = `${this.file}.tmp-${process.pid}-${crypto
+      .randomBytes(6)
+      .toString("hex")}`;
+    fs.writeFileSync(
+      temporary,
+      JSON.stringify({ ...this.load(), ...patch }, null, 2),
+      { mode: 0o600 }
+    );
+    fs.renameSync(temporary, this.file);
+    fs.chmodSync(this.file, 0o600);
   }
 
   get redirectUrl(): string {
-    return `http://127.0.0.1:${PORT}/callback`;
+    return `http://127.0.0.1:${callbackPort()}/callback`;
   }
 
   get clientMetadata(): OAuthClientMetadata {
@@ -102,20 +133,68 @@ export class FileOAuthProvider implements OAuthClientProvider {
     };
   }
 
-  clientInformation(): OAuthClientInformation | undefined {
-    return this.load().clientInformation;
+  private issuer(
+    context?: OAuthClientInformationContext,
+    value?: unknown
+  ): string | undefined {
+    return (
+      context?.issuer ??
+      (value as { issuer?: string } | undefined)?.issuer
+    );
   }
 
-  saveClientInformation(info: OAuthClientInformationFull): void {
-    this.save({ clientInformation: info });
+  clientInformation(
+    context?: OAuthClientInformationContext
+  ): OAuthClientInformation | undefined {
+    const stored = this.load();
+    const issuer = this.issuer(context) ?? stored.lastIssuer;
+    return issuer
+      ? stored.clientInformationByIssuer?.[issuer]
+      : undefined;
   }
 
-  tokens(): OAuthTokens | undefined {
-    return this.load().tokens;
+  saveClientInformation(
+    info: OAuthClientInformationFull,
+    context?: OAuthClientInformationContext
+  ): void {
+    const issuer = this.issuer(context, info);
+    if (!issuer) {
+      throw new Error("OAuth issuer missing while saving client information");
+    }
+    const stored = this.load();
+    this.save({
+      clientInformationByIssuer: {
+        ...stored.clientInformationByIssuer,
+        [issuer]: info,
+      },
+      lastIssuer: issuer,
+    });
   }
 
-  saveTokens(tokens: OAuthTokens): void {
-    this.save({ tokens });
+  tokens(
+    context?: OAuthClientInformationContext
+  ): OAuthTokens | undefined {
+    const stored = this.load();
+    const issuer = this.issuer(context) ?? stored.lastIssuer;
+    return issuer ? stored.tokensByIssuer?.[issuer] : undefined;
+  }
+
+  saveTokens(
+    tokens: OAuthTokens,
+    context?: OAuthClientInformationContext
+  ): void {
+    const issuer = this.issuer(context, tokens);
+    if (!issuer) {
+      throw new Error("OAuth issuer missing while saving tokens");
+    }
+    const stored = this.load();
+    this.save({
+      tokensByIssuer: {
+        ...stored.tokensByIssuer,
+        [issuer]: tokens,
+      },
+      lastIssuer: issuer,
+    });
   }
 
   saveCodeVerifier(codeVerifier: string): void {
@@ -155,9 +234,23 @@ export class FileOAuthProvider implements OAuthClientProvider {
       return Promise.reject(err);
     }
     return new Promise((resolve, reject) => {
-      this.codeResolve = resolve;
-      this.codeReject = reject;
-      setTimeout(() => reject(new Error(`authorization timed out after ${timeoutMs / 1000}s`)), timeoutMs).unref();
+      this.codeResolve = (code) => {
+        if (this.waitTimer) clearTimeout(this.waitTimer);
+        resolve(code);
+      };
+      this.codeReject = (error) => {
+        if (this.waitTimer) clearTimeout(this.waitTimer);
+        reject(error);
+      };
+      this.waitTimer = setTimeout(() => {
+        this.closeCallbackServer();
+        reject(
+          new Error(
+            `authorization timed out after ${timeoutMs / 1000}s`
+          )
+        );
+      }, timeoutMs);
+      this.waitTimer.unref();
     });
   }
 
@@ -165,7 +258,8 @@ export class FileOAuthProvider implements OAuthClientProvider {
     if (this.server) return Promise.resolve();
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => {
-        const u = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
+        const port = callbackPort();
+        const u = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
         if (u.pathname !== "/callback") {
           res.writeHead(404).end();
           return;
@@ -181,12 +275,15 @@ export class FileOAuthProvider implements OAuthClientProvider {
           return;
         }
         const code = u.searchParams.get("code");
-        const err = u.searchParams.get("error");
+        const err = u.searchParams
+          .get("error")
+          ?.replace(/[^A-Za-z0-9._-]/g, "")
+          .slice(0, 80);
         res.writeHead(200, { "content-type": "text/html" });
         res.end(
           code
             ? "<body style='font-family:serif;text-align:center;padding-top:4rem'><h2>openmoat authorized</h2>You can close this tab.</body>"
-            : `<body>authorization failed: ${err ?? "no code"}</body>`
+            : "<body>authorization failed</body>"
         );
         if (code) {
           if (this.codeResolve) this.codeResolve(code);
@@ -197,14 +294,52 @@ export class FileOAuthProvider implements OAuthClientProvider {
           else this.pendingError = e;
         }
       });
-      this.server.on("error", (e) => reject(new Error(`OAuth callback port ${PORT} unavailable: ${e.message}`)));
-      this.server.listen(PORT, "127.0.0.1", () => resolve());
+      const port = callbackPort();
+      this.server.on("error", (e) => {
+        this.server = undefined;
+        reject(
+          new Error(
+            `OAuth callback port ${port} unavailable: ${e.message}`
+          )
+        );
+      });
+      this.server.listen(port, "127.0.0.1", () => resolve());
       this.server.unref();
     });
   }
 
   closeCallbackServer(): void {
+    if (this.waitTimer) clearTimeout(this.waitTimer);
+    this.waitTimer = undefined;
     this.server?.close();
     this.server = undefined;
+  }
+
+  saveDiscoveryState(state: OAuthDiscoveryState): void {
+    this.save({ discoveryState: state });
+  }
+
+  discoveryState(): OAuthDiscoveryState | undefined {
+    return this.load().discoveryState;
+  }
+
+  invalidateCredentials(
+    scope: "all" | "client" | "tokens" | "verifier" | "discovery"
+  ): void {
+    const stored = this.load();
+    if (scope === "all") {
+      this.save({
+        clientInformationByIssuer: {},
+        tokensByIssuer: {},
+        codeVerifier: undefined,
+        discoveryState: undefined,
+        lastIssuer: undefined,
+      });
+      return;
+    }
+    if (scope === "client") this.save({ clientInformationByIssuer: {} });
+    if (scope === "tokens") this.save({ tokensByIssuer: {} });
+    if (scope === "verifier") this.save({ codeVerifier: undefined });
+    if (scope === "discovery") this.save({ discoveryState: undefined });
   }
 }

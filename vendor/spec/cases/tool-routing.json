@@ -1,1 +1,0 @@
-{"version":1,"id":"tool-routing","driver":"mcp","operation":"tool_routing","input":{"server":{"mode":"normal"}},"expected":{"ok":true,"search":true,"deterministic":true,"describe":true,"call":true}}

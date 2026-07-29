@@ -1,1 +1,0 @@
-{"version":1,"id":"signal-cleanup","driver":"mcp","operation":"signal_cleanup","input":{"server":{"mode":"spawn-descendant"}},"expected":{"ok":true,"childrenRemaining":0}}

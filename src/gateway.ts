@@ -11,10 +11,6 @@ import {
   type StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import type { OpenMoatConfig } from "./config.js";
-import {
-  resolveFederatedServer,
-  type FederatedAsset,
-} from "./federation.js";
 import { getHealth } from "./health.js";
 import { makeTransport } from "./mcp-client.js";
 import { FileOAuthProvider } from "./oauth.js";
@@ -50,7 +46,7 @@ interface PoolEntry {
 }
 
 interface RuntimeTarget {
-  asset: FederatedAsset<ServerDef>;
+  asset: { id: string; value: ServerDef };
   server: ResolvedServer;
   poolKey: string;
   cwd?: string;
@@ -61,6 +57,7 @@ const pool = new Map<string, PoolEntry>();
 const inflight = new Map<string, Promise<PoolEntry>>();
 const reservations = new Map<string, string>();
 const activeCalls = new Map<string, number>();
+const spawningPids = new Set<number>();
 
 const DOWNSTREAM_HOP_META_KEYS = new Set([
   CLIENT_CAPABILITIES_META_KEY,
@@ -69,7 +66,9 @@ const DOWNSTREAM_HOP_META_KEYS = new Set([
   SERVER_INFO_META_KEY,
 ]);
 
-export function newGatewayClient(): Client {
+export function newGatewayClient(
+  era: "auto" | "modern" = "auto"
+): Client {
   return new Client(
     {
       name: "openmoat-gateway",
@@ -77,7 +76,10 @@ export function newGatewayClient(): Client {
     },
     {
       versionNegotiation: {
-        mode: "auto",
+        mode:
+          era === "modern"
+            ? { pin: "2026-07-28" }
+            : "auto",
       },
     }
   );
@@ -134,6 +136,12 @@ export function reapAll(): { server: string; pids: number[] }[] {
   inflight.clear();
   reservations.clear();
   activeCalls.clear();
+  const pending = [...spawningPids];
+  spawningPids.clear();
+  for (const pid of pending) killProcessTree(pid);
+  if (pending.length) {
+    reaped.push({ server: "starting", pids: pending });
+  }
   return reaped;
 }
 
@@ -157,7 +165,9 @@ export interface GatewayHealth {
 
 export function gatewayHealth(cfg: OpenMoatConfig): GatewayHealth {
   reapIdle(cfg);
-  const stats = getHealth(cfg).serverStats();
+  const health = getHealth(cfg);
+  const stats = health.serverStats();
+  const openServers = health.openServers();
   const names = new Set([
     ...cfg.inlineServers.map((server) => server.name),
     ...Object.keys(stats),
@@ -179,6 +189,10 @@ export function gatewayHealth(cfg: OpenMoatConfig): GatewayHealth {
       status:
         entries.length > 0
           ? "ready"
+          : [...openServers].some(
+                (key) => key === name || key.startsWith(`${name}@`)
+              )
+            ? "open"
           : metric.failures > 0
             ? "failed"
             : inflight.size > 0
@@ -235,18 +249,21 @@ function resolveTarget(
   serverName: string,
   requestedCwd?: string
 ): RuntimeTarget {
-  const asset = resolveFederatedServer(cfg, serverName);
-  if (!asset) {
+  const definition = cfg.inlineServers.find(
+    (server) => server.name === serverName
+  );
+  if (!definition) {
     throw new Error(
-      `'${serverName}' is not in the federated MCP catalog. Use registry_list.`
+      `'${serverName}' is not configured. Use registry_list.`
     );
   }
-  if (asset.value.trusted === false) {
+  const asset = { id: definition.name, value: definition };
+  if (definition.trusted === false) {
     throw new Error(
       `QUARANTINED: '${serverName}' requires approval from the human-only 'moat trust' command`
     );
   }
-  if (asset.value.disabled) {
+  if (definition.disabled) {
     throw new Error(`QUARANTINED: '${serverName}' is disabled`);
   }
 
@@ -295,7 +312,8 @@ function entryAlive(entry: PoolEntry): boolean {
 async function getEntry(
   cfg: OpenMoatConfig,
   serverName: string,
-  requestedCwd?: string
+  requestedCwd?: string,
+  interactiveOAuth = false
 ): Promise<PoolEntry> {
   reapIdle(cfg);
   const target = resolveTarget(cfg, serverName, requestedCwd);
@@ -309,7 +327,12 @@ async function getEntry(
   if (pending) return pending;
 
   reservePool(cfg, target.asset.id, target.poolKey);
-  const spawning = spawnClient(cfg, target, serverName)
+  const spawning = spawnClient(
+    cfg,
+    target,
+    serverName,
+    interactiveOAuth
+  )
     .catch((error) => {
       reservations.delete(target.poolKey);
       throw error;
@@ -334,20 +357,48 @@ async function connectHttp(
   cfg: OpenMoatConfig,
   target: RuntimeTarget,
   client: Client,
-  serverName: string
+  serverName: string,
+  interactiveOAuth: boolean
 ): Promise<Client> {
   const server = target.server;
   if (server.headers) {
-    const transport = makeTransport(server);
-    await withDeadline(
-      client.connect(transport),
-      server.startupTimeoutMs ?? 10_000,
-      () => transport.close()
-    );
-    return client;
+    let transport = makeTransport(server);
+    try {
+      await withDeadline(
+        client.connect(transport),
+        server.startupTimeoutMs ?? 10_000,
+        () => transport.close()
+      );
+      return client;
+    } catch (error) {
+      if (
+        !/Unsupported protocol version: 2025-11-25.*2026-07-28/i.test(
+          String(error)
+        )
+      ) {
+        throw error;
+      }
+      try {
+        await client.close();
+      } catch {
+        // The legacy probe may not have completed a connection.
+      }
+      client = newGatewayClient("modern");
+      transport = makeTransport(server);
+      await withDeadline(
+        client.connect(transport),
+        server.startupTimeoutMs ?? 10_000,
+        () => transport.close()
+      );
+      return client;
+    }
   }
 
-  const provider = new FileOAuthProvider(cfg.stateDir, server.name, true);
+  const provider = new FileOAuthProvider(
+    cfg.stateDir,
+    server.name,
+    interactiveOAuth
+  );
   let transport = makeTransport(server, {
     authProvider: provider,
   }) as StreamableHTTPClientTransport;
@@ -360,9 +411,12 @@ async function connectHttp(
     return client;
   } catch (error) {
     if (error instanceof UnauthorizedError) {
-      const code = await provider.waitForCode();
-      await transport.finishAuth(code);
-      provider.closeCallbackServer();
+      try {
+        const code = await provider.waitForCode();
+        await transport.finishAuth(code);
+      } finally {
+        provider.closeCallbackServer();
+      }
       client = newGatewayClient();
       transport = makeTransport(server, {
         authProvider: provider,
@@ -379,6 +433,27 @@ async function connectHttp(
         `PROCESS_FAILED: '${serverName}' requires an explicitly configured token header`
       );
     }
+    if (
+      /Unsupported protocol version: 2025-11-25.*2026-07-28/i.test(
+        String(error)
+      )
+    ) {
+      try {
+        await client.close();
+      } catch {
+        // The legacy probe may not have completed a connection.
+      }
+      client = newGatewayClient("modern");
+      transport = makeTransport(server, {
+        authProvider: provider,
+      }) as StreamableHTTPClientTransport;
+      await withDeadline(
+        client.connect(transport),
+        server.startupTimeoutMs ?? 10_000,
+        () => transport.close()
+      );
+      return client;
+    }
     throw error;
   }
 }
@@ -386,7 +461,8 @@ async function connectHttp(
 async function spawnClient(
   cfg: OpenMoatConfig,
   target: RuntimeTarget,
-  serverName: string
+  serverName: string,
+  interactiveOAuth: boolean
 ): Promise<PoolEntry> {
   const { server, poolKey, redactor } = target;
 
@@ -427,26 +503,44 @@ async function spawnClient(
   let pid: number | undefined;
   try {
     if (server.transport === "http") {
-      client = await connectHttp(cfg, target, client, serverName);
+      client = await connectHttp(
+        cfg,
+        target,
+        client,
+        serverName,
+        interactiveOAuth
+      );
     } else {
       const transport = makeTransport(server, { cwd: target.cwd });
-      await withDeadline(
-        client.connect(transport),
-        server.startupTimeoutMs ?? 10_000,
-        async () => {
-          if (
-            "pid" in transport &&
-            typeof transport.pid === "number"
-          ) {
-            killProcessTree(transport.pid);
-          }
-          await transport.close();
-        }
-      );
-      pid =
+      const connecting = client.connect(transport);
+      const startingPid =
         "pid" in transport && typeof transport.pid === "number"
           ? transport.pid
           : undefined;
+      if (startingPid !== undefined) spawningPids.add(startingPid);
+      try {
+        await withDeadline(
+          connecting,
+          server.startupTimeoutMs ?? 10_000,
+          async () => {
+            if (
+              "pid" in transport &&
+              typeof transport.pid === "number"
+            ) {
+              killProcessTree(transport.pid);
+            }
+            await transport.close();
+          }
+        );
+        pid =
+          "pid" in transport && typeof transport.pid === "number"
+            ? transport.pid
+            : undefined;
+      } finally {
+        if (startingPid !== undefined) {
+          spawningPids.delete(startingPid);
+        }
+      }
     }
   } catch (error) {
     const message = redactor.text(String(error));
@@ -483,13 +577,16 @@ function authorize(
   serverName: string,
   toolName: string,
   agent?: string
-): FederatedAsset<ServerDef> {
-  const asset = resolveFederatedServer(cfg, serverName);
-  if (!asset) {
+): { id: string; value: ServerDef } {
+  const definition = cfg.inlineServers.find(
+    (server) => server.name === serverName
+  );
+  if (!definition) {
     throw new Error(
-      `'${serverName}' is not in the federated MCP catalog. Use registry_list.`
+      `'${serverName}' is not configured. Use registry_list.`
     );
   }
+  const asset = { id: definition.name, value: definition };
   requireGatewayAuthorization(
     cfg,
     agent,
@@ -504,10 +601,24 @@ export async function gatewayDescribe(
   cfg: OpenMoatConfig,
   serverName: string,
   toolName?: string,
-  agent?: string
+  agent?: string,
+  options: { interactiveOAuth?: boolean; bypassPolicy?: boolean } = {}
 ): Promise<string> {
-  const asset = authorize(cfg, serverName, toolName ?? "*", agent);
-  const entry = await getEntry(cfg, serverName);
+  const asset = options.bypassPolicy
+    ? (() => {
+        const value = cfg.inlineServers.find(
+          (server) => server.name === serverName
+        );
+        if (!value) throw new Error(`'${serverName}' is not configured`);
+        return { id: value.name, value };
+      })()
+    : authorize(cfg, serverName, toolName ?? "*", agent);
+  const entry = await getEntry(
+    cfg,
+    serverName,
+    undefined,
+    options.interactiveOAuth === true
+  );
   const result = await withDeadline(
     entry.client.listTools(),
     entry.callTimeoutMs,
@@ -547,7 +658,7 @@ export async function gatewayCall(
   agent?: string
 ): Promise<GatewayResult> {
   const health = getHealth(cfg);
-  let asset: FederatedAsset<ServerDef>;
+  let asset: { id: string; value: ServerDef };
   try {
     asset = authorize(cfg, serverName, toolName, agent);
   } catch (error) {

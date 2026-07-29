@@ -1,1 +1,0 @@
-{"version":1,"id":"validate-valid","driver":"cli","operation":"validate","input":{"fixture":"fixtures/valid/minimal.yaml"},"expected":{"ok":true}}

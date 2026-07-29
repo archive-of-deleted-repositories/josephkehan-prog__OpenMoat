@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { initWorkspace } from "../dist/init.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 
@@ -116,6 +117,19 @@ test("starter initializes one Moatfile plus private local state", () => {
       fs.statSync(path.join(temp, "secrets.env")).mode & 0o777,
       0o600
     );
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("starter refuses non-empty destinations unless force is explicit", () => {
+  const temp = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "openmoat-init-"));
+  try {
+    fs.writeFileSync(path.join(temp, "owned.txt"), "preserve");
+    assert.throws(() => initWorkspace(temp), /not empty/);
+    const result = initWorkspace(temp, true);
+    assert.equal(fs.readFileSync(path.join(temp, "owned.txt"), "utf8"), "preserve");
+    assert.equal(result.created.length, 3);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }

@@ -32,3 +32,42 @@ test("gateway policy rejection names caller and target", () => {
     /gateway policy denied 'research' access to 'github:create_issue'/
   );
 });
+
+test("gateway policy applies wildcard rules, zones, and missing-policy fail-closed", () => {
+  const zoned = {
+    gatewayPolicy: {
+      default: "deny",
+      agents: {
+        "*": {
+          allow: ["public:*"],
+          deny: ["public:delete"],
+          zone: "public",
+        },
+      },
+    },
+  };
+  assert.equal(
+    authorizeGateway(zoned, undefined, "public", "read", "public")
+      .allowed,
+    true
+  );
+  assert.equal(
+    authorizeGateway(zoned, "new-client", "public", "delete", "public")
+      .allowed,
+    false
+  );
+  assert.match(
+    authorizeGateway(zoned, "new-client", "private", "read", "private")
+      .reason,
+    /zone denied/
+  );
+  assert.equal(
+    authorizeGateway({}, "client", "server", "tool").allowed,
+    false
+  );
+  assert.equal(
+    requireGatewayAuthorization(zoned, "client", "public", "read", "public")
+      .allowed,
+    true
+  );
+});

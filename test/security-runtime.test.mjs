@@ -175,15 +175,13 @@ test("agent MCP surface contains no trust, enablement, or reindex administration
   }
 });
 
-test("Moatfile v1 accepts v0.2 runtime security fields and rejects mixed-risk zones", () => {
+test("Moatfile v1 accepts focused runtime security fields and rejects mixed-risk zones", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-security-config-"));
   const valid = path.join(root, "valid");
   fs.writeFileSync(
     valid,
     `apiVersion: openmoat.dev/v1
 kind: Moatfile
-features: {}
-targets: {}
 gateway:
   callers:
     codex:

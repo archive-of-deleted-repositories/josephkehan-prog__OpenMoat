@@ -7,6 +7,10 @@ import {
   rankToolCatalog,
   searchToolCatalog,
 } from "../dist/tool-catalog.js";
+import {
+  isToolNotFoundError,
+  suggestToolName,
+} from "../dist/tool-policy.js";
 
 const entries = [
   {
@@ -66,4 +70,45 @@ List issues.
 
 test("zero-overlap catalog entries are omitted instead of guessed", () => {
   assert.deepEqual(rankToolCatalog(entries, "weather forecast", 5), []);
+});
+
+test("missing-tool recovery offers bounded deterministic near names", () => {
+  assert.deepEqual(
+    suggestToolName("read_flie", [
+      "write_file",
+      "read_file",
+      "list_directory",
+    ]),
+    ["read_file"]
+  );
+  assert.equal(
+    isToolNotFoundError("Unknown tool: read_flie"),
+    true
+  );
+  assert.equal(isToolNotFoundError("network not found"), false);
+});
+
+test("missing-tool recovery covers exact, token, substring, tail, and limits", () => {
+  assert.deepEqual(
+    suggestToolName("read_file", ["read_file", "write_file"]),
+    ["read_file"]
+  );
+  assert.deepEqual(
+    suggestToolName("read file", ["read_file"]),
+    ["read_file"]
+  );
+  assert.deepEqual(
+    suggestToolName("directory", ["list_directory"]),
+    ["list_directory"]
+  );
+  assert.deepEqual(
+    suggestToolName("query", ["db_execute_query"]),
+    ["db_execute_query"]
+  );
+  assert.deepEqual(suggestToolName("", ["a"]), ["a"]);
+  assert.deepEqual(suggestToolName("a", [""]), [""]);
+  assert.deepEqual(suggestToolName("query", ["db_execute_query"], 0), []);
+  assert.deepEqual(suggestToolName("unrelated", ["read_file"]), []);
+  assert.equal(isToolNotFoundError("No such tool: x"), true);
+  assert.equal(isToolNotFoundError("Tool not found: x"), true);
 });

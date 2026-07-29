@@ -21,7 +21,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - uses: astral-sh/setup-uv@v6
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24.x"

@@ -1,1 +1,0 @@
-{"version":1,"id":"path-resolution","driver":"contract","operation":"resolve_path","input":{"base":"/tmp/moat","value":"./server"},"expected":{"ok":true,"value":"/tmp/moat/server"}}

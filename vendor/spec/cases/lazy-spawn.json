@@ -1,1 +1,0 @@
-{"version":1,"id":"lazy-spawn","driver":"mcp","operation":"lazy_spawn","input":{"server":{"mode":"normal"}},"expected":{"ok":true,"before":0,"after":1}}

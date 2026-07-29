@@ -1,7 +1,7 @@
 {
   "name": "openmoat",
-  "version": "0.4.0",
-  "description": "Local-first MCP gateway and shared agent configuration reconciler.",
+  "version": "1.0.0",
+  "description": "Local security gateway for MCP with deny-by-default policy and stateless protocol support.",
   "license": "MIT",
   "engines": {
     "node": ">=22"
@@ -12,35 +12,31 @@
   },
   "files": [
     "dist/",
-    "examples/",
-    "vendor/spec/cases/",
-    "vendor/spec/conformance/*.py",
-    "vendor/spec/fixtures/",
-    "vendor/spec/schemas/",
+    "examples/Moatfile",
+    "schemas/",
     "LICENSE",
     "README.md",
     "ARCHITECTURE.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "docs/threat-model.md",
+    "docs/release-checklist.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
     "test": "tsc && node --test test/*.test.mjs",
-    "test:coverage": "npm run test:coverage:core && npm run test:coverage:gateway",
-    "test:coverage:core": "node --test --experimental-test-coverage --test-coverage-include=dist/config.js --test-coverage-include=dist/context-store.js --test-coverage-include=dist/reconcile.js --test-coverage-include=dist/integrations.js --test-coverage-include=dist/policy.js --test-coverage-include=dist/registry.js --test-coverage-include=dist/runtime-security.js --test-coverage-include=dist/tool-catalog.js --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80 test/*.test.mjs",
-    "test:coverage:gateway": "c8 --all --include=dist/archive.js --include=dist/config.js --include=dist/context-store.js --include=dist/db.js --include=dist/gateway-runtime.js --include=dist/gateway.js --include=dist/init.js --include=dist/instincts.js --include=dist/integrations.js --include=dist/policy.js --include=dist/process-tree.js --include=dist/reconcile.js --include=dist/registry.js --include=dist/runtime-security.js --include=dist/server.js --include=dist/tool-catalog.js --include=dist/tool-surface.js --reporter=text --check-coverage --lines=80 --functions=80 --branches=80 node scripts/coverage-suite.mjs",
+    "test:coverage": "c8 --all --include=dist/admin.js --include=dist/archive.js --include=dist/catalog.js --include=dist/config.js --include=dist/db.js --include=dist/doctor.js --include=dist/health.js --include=dist/init.js --include=dist/policy.js --include=dist/process-tree.js --include=dist/registry.js --include=dist/runtime-security.js --include=dist/server.js --include=dist/tool-catalog.js --include=dist/tool-policy.js --include=dist/tool-surface.js --reporter=text --check-coverage --lines=80 --functions=80 --branches=80 node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "verify": "node scripts/verify.mjs",
-    "sync": "node dist/cli.js sync",
     "serve": "node dist/cli.js serve",
     "doctor": "node dist/cli.js doctor"
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.0.0",
-    "@modelcontextprotocol/core": "2.0.0",
     "@modelcontextprotocol/server": "2.0.0",
     "ajv": "^8.17.1",
     "commander": "^12.1.0",
-    "jsonc-parser": "^3.3.1",
     "yaml": "^2.6.1",
     "zod": "^4.2.0"
   },

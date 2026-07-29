@@ -5,185 +5,129 @@ import path from "node:path";
 import test from "node:test";
 import { CLIENT_INFO_META_KEY } from "@modelcontextprotocol/server";
 import {
-  bootstrapPersonalSections,
   boundToolResultEnvelope,
-  recentUsageEvents,
   resolveCallerContext,
 } from "../dist/server.js";
 
-test("small tool-result envelopes pass through without archival", () => {
-  const result = {
-    content: [{ type: "text", text: "small" }],
-    structuredContent: { answer: 42 },
-    isError: false,
+function archiveConfig(stateDir) {
+  return {
+    stateDir,
+    archiveLimits: {
+      maxBlobBytes: 1_048_576,
+      maxCallerBytes: 16_777_216,
+      maxCallerEntries: 64,
+      ttlMs: 86_400_000,
+    },
   };
+}
 
-  const bounded = boundToolResultEnvelope(
-    { stateDir: "/unused" },
-    "caller-a",
-    result
-  );
-
-  assert.equal(bounded.archived, null);
-  assert.equal(bounded.result, result);
-});
-
-test("oversized envelopes return a minimal caller-bound archive marker", () => {
-  const stateDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "openmoat-bound-result-")
-  );
-  const bounded = boundToolResultEnvelope(
-    { stateDir },
-    "caller-a",
-    {
-      content: [{ type: "text", text: "x".repeat(13_000) }],
-    }
-  );
-
-  assert.match(bounded.archived, /^[a-f0-9]{16}$/);
-  assert.equal(bounded.result.isError, undefined);
-  assert.equal("resultType" in bounded.result, false);
-  assert.match(bounded.result.content[0].text, /structured envelope archived/);
-
-  const error = boundToolResultEnvelope(
-    { stateDir },
-    "caller-a",
-    {
-      content: [{ type: "text", text: "y".repeat(13_000) }],
-      isError: true,
-      resultType: "tool_error",
-    }
-  );
-  assert.equal(error.result.isError, true);
-  assert.equal(error.result.resultType, "tool_error");
-  fs.rmSync(stateDir, { recursive: true, force: true });
-});
-
-test("recent usage formatting is caller-scoped and ignores malformed records", () => {
-  const stateDir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "openmoat-recent-usage-")
-  );
+test("small results pass through and oversized results become caller-bound handles", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-result-"));
   try {
-    assert.equal(
-      recentUsageEvents({ stateDir }, 10, "caller-a"),
-      "(no usage events yet)"
-    );
-    fs.writeFileSync(
-      path.join(stateDir, "usage.jsonl"),
-      [
-        "not-json",
-        JSON.stringify({
-          ts: "2026-07-29T00:00:00.000Z",
-          agent: "caller-a",
-          tool: "tool_call",
-          server: "fixture",
-          target: "echo",
-          ms: 12,
-          isError: true,
-        }),
-        JSON.stringify({
-          ts: "2026-07-29T00:00:30.000Z",
-          agent: "caller-a",
-          tool: "tool_describe",
-          server: "fixture",
-        }),
-        JSON.stringify({
-          ts: "2026-07-29T00:01:00.000Z",
-          agent: "caller-b",
-          tool: "tool_search",
-          queryLength: 8,
-        }),
-      ].join("\n")
-    );
-
-    const caller = recentUsageEvents({ stateDir }, 10, "caller-a");
-    assert.match(caller, /fixture › echo \(12ms\) ERROR/);
-    assert.match(caller, /fixture › \*/);
-    assert.doesNotMatch(caller, /caller-b/);
-
-    const operator = recentUsageEvents({ stateDir }, 1);
-    assert.match(operator, /caller-b/);
-    assert.match(operator, /tool_search: search/);
-  } finally {
-    fs.rmSync(stateDir, { recursive: true, force: true });
-  }
-});
-
-test("bootstrap sections honor disabled, missing, and enabled personal sources", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-bootstrap-"));
-  const profile = path.join(root, "AGENTS.md");
-  fs.writeFileSync(profile, "profile data");
-  try {
+    const small = {
+      content: [{ type: "text", text: "small" }],
+      structuredContent: { answer: 42 },
+      isError: false,
+    };
     assert.deepEqual(
-      bootstrapPersonalSections(
-        {
-          features: { profile: false, handoffs: false },
-          profileFiles: [profile],
-        },
-        { latest: () => [] },
-        "caller-a"
-      ),
-      []
+      boundToolResultEnvelope(archiveConfig(root), "caller-a", small),
+      { result: small, archived: null }
     );
 
-    const sections = bootstrapPersonalSections(
+    const bounded = boundToolResultEnvelope(
+      archiveConfig(root),
+      "caller-a",
       {
-        features: { profile: true, handoffs: true },
-        profileFiles: [path.join(root, "missing.md"), profile],
-      },
-      {
-        latest: () => [
-          {
-            relativePath: "caller-a/handoff.md",
-            content: "handoff data",
-          },
-        ],
-      },
-      "caller-a"
+        content: [{ type: "text", text: "x".repeat(13_000) }],
+        isError: true,
+        resultType: "tool_error",
+      }
     );
-    assert.equal(sections.length, 2);
-    assert.match(sections[0], /profile data/);
-    assert.match(sections[1], /handoff data/);
+    assert.match(bounded.archived, /^[a-f0-9]{48}$/);
+    assert.equal(bounded.result.isError, true);
+    assert.equal(bounded.result.resultType, "tool_error");
+    assert.match(bounded.result.content[0].text, /Tool result archived/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("caller resolution fails closed for malformed modern metadata", () => {
+test("result envelopes reject cycles, excessive depth, and excessive entries", () => {
+  const cfg = archiveConfig(
+    fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-shape-"))
+  );
+  const cyclic = { content: [] };
+  cyclic.self = cyclic;
+  assert.throws(
+    () => boundToolResultEnvelope(cfg, "caller", cyclic),
+    /cyclic/
+  );
+
+  let deep = "leaf";
+  for (let index = 0; index < 40; index++) deep = [deep];
+  assert.throws(
+    () =>
+      boundToolResultEnvelope(cfg, "caller", {
+        content: deep,
+      }),
+    /RESULT_TOO_DEEP/
+  );
+  assert.throws(
+    () =>
+      boundToolResultEnvelope(cfg, "caller", {
+        content: Array.from({ length: 50_001 }, () => null),
+      }),
+    /RESULT_TOO_COMPLEX/
+  );
+});
+
+test("caller identity is per-request, bounded, and fails closed", () => {
   const server = {
     server: {
-      getClientVersion: () => ({ name: "legacy-client", version: "1.0.0" }),
-    },
-  };
-  const malformed = {
-    mcpReq: {
-      envelope: {
-        [CLIENT_INFO_META_KEY]: { name: "   " },
-      },
+      getClientVersion: () => ({
+        name: "legacy-client",
+        version: "1.0.0",
+      }),
     },
   };
   const modern = resolveCallerContext(
     server,
     { era: "modern" },
-    malformed
+    {
+      mcpReq: {
+        envelope: {
+          [CLIENT_INFO_META_KEY]: {
+            name: "modern-client",
+            version: "1.0.0",
+          },
+        },
+      },
+    }
   );
-  assert.deepEqual(modern, {
-    label: "unknown",
-    source: "unknown",
-    assurance: "none",
-    protocolEra: "modern",
-  });
+  assert.equal(modern.label, "modern-client");
+  assert.equal(modern.assurance, "transport-self-asserted");
 
-  const missingModernIdentity = resolveCallerContext(
+  const malformed = resolveCallerContext(
     server,
     { era: "modern" },
     {
       mcpReq: {
-        envelope: { [CLIENT_INFO_META_KEY]: null },
+        envelope: {
+          [CLIENT_INFO_META_KEY]: { name: "x".repeat(129) },
+        },
       },
     }
   );
-  assert.equal(missingModernIdentity.label, "unknown");
+  assert.equal(malformed.label, "unknown");
+
+  const launcher = resolveCallerContext(
+    server,
+    { era: "modern" },
+    { mcpReq: { envelope: {} } },
+    "trusted-launcher"
+  );
+  assert.equal(launcher.label, "trusted-launcher");
+  assert.equal(launcher.assurance, "local-launcher-asserted");
 
   const legacy = resolveCallerContext(
     server,
@@ -191,27 +135,4 @@ test("caller resolution fails closed for malformed modern metadata", () => {
     { mcpReq: { envelope: undefined } }
   );
   assert.equal(legacy.label, "legacy-client");
-  assert.equal(legacy.clientInfo.version, "1.0.0");
-
-  const modernWithoutVersion = resolveCallerContext(
-    server,
-    { era: "modern" },
-    {
-      mcpReq: {
-        envelope: {
-          [CLIENT_INFO_META_KEY]: { name: "modern-client", version: 7 },
-        },
-      },
-    }
-  );
-  assert.deepEqual(modernWithoutVersion.clientInfo, {
-    name: "modern-client",
-  });
-
-  const noLegacyIdentity = resolveCallerContext(
-    { server: { getClientVersion: () => undefined } },
-    { era: "legacy" },
-    { mcpReq: { envelope: null } }
-  );
-  assert.equal(noLegacyIdentity.label, "unknown");
 });

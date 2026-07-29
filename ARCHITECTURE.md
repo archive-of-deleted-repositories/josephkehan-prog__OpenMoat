@@ -1,47 +1,62 @@
 # Architecture
 
-The public boundary is the versioned `Moatfile` and OpenMoat Spec snapshot.
-Internally the reference product has four separable layers:
+OpenMoat is one TypeScript/Node.js process with four boundaries:
 
-1. `reconcile.ts` is a pure deterministic planner.
-2. `ApplyInterface` owns filesystem effects; adapters implement concrete
-   harness writes.
-3. `GatewayRuntime` is the data-plane boundary. The local TypeScript runtime
-   owns MCP processes, pools, timeouts, policy enforcement, and cleanup
-   independently of reconciliation adapters.
-4. Optional shared-brain modules consume the normalized runtime configuration.
+1. `config.ts` validates and normalizes one `Moatfile`. Unknown or retired
+   fields fail closed.
+2. `server.ts` exposes seven bounded MCP tools over stdio for legacy
+   2025-11-25 and stateless 2026-07-28 clients.
+3. `gateway.ts` enforces policy before spawn, negotiates either protocol era
+   with downstream stdio or Streamable HTTP servers, and owns pools, deadlines,
+   breakers, redaction, and cleanup.
+4. Private local state stores only derived catalog metadata, aggregate health,
+   issuer-bound OAuth state, and caller-bound oversized results.
 
-Core `tool_search` uses deterministic lexical ranking over a bounded,
-provenance-labeled catalog. It never turns on RAG, calls an embedding model, or
-contacts a reranker. Semantic document RAG remains a separate opt-in feature.
+```mermaid
+flowchart LR
+  C["Local MCP clients"] -->|"stdio, legacy or stateless"| S["OpenMoat server"]
+  S --> P["Caller policy and zones"]
+  P --> D["Deterministic catalog / describe / call"]
+  D --> G["Bounded gateway runtime"]
+  G -->|"stdio, negotiated"| L["Local MCP server"]
+  G -->|"Streamable HTTP, negotiated"| H["Remote MCP server"]
+  G --> B["Private state: health, OAuth, archives"]
+```
 
-The intended evolutionary path is a TypeScript control plane with an optional
-Rust data-plane gateway. `server.ts` depends on `GatewayRuntime`, not child
-process details, so a future Rust process can replace the local runtime without
-rewriting configuration, reconciliation, profiles, handoffs, or adapters. The
-wire contract for that external runtime is deliberately not frozen in 0.2; it
-must first be derived from cross-language conformance evidence.
+## Stateless boundary
 
-The MCP TypeScript v2 client, server, and core packages are pinned at 2.0.0.
-The reference stdio server uses the SDK's dual-era serving path for
-MCP 2025-11-25 initialization and MCP 2026-07-28 discovery. Downstream clients
-negotiate the protocol generation automatically. Process pools remain an
-implementation optimization for startup cost, concurrency, working-directory
-isolation, and cleanup; they do not supply protocol-session correctness.
+Modern requests carry protocol, client information, and capabilities per
+request. No OpenMoat protocol correctness depends on a session identifier.
+Legacy initialization remains supported on outward and downstream stdio for
+compatibility. Pooling is only a local startup optimization.
 
-Caller context is resolved at the tool-request boundary. Modern requests use
-their per-request `clientInfo`; legacy requests use the initialized connection
-label. A trusted launcher can pin the label with `OPENMOAT_CALLER`. These are
-transport policy labels, not authenticated principals.
+Caller policy is evaluated for each `describe` and `call`. Search results are
+filtered through the same caller, trust, and zone decision so denied metadata
+does not leak before a call.
 
-Gateway tool results retain the complete MCP envelope. Recursive redaction
-applies before forwarding, and downstream protocol-hop metadata such as client
-and server identity/version fields is removed so it cannot become upstream
-authority.
+## Trust and authorization
 
-`vendor/spec` is produced by `scripts/update-spec.sh /path/to/OpenMoat-Spec`,
-verified against the signed tag and exact commit in `spec.lock`, and never
-edited by hand. Calling the script without a source verifies the vendored
-snapshot, so a standalone clone has no sibling-repository dependency. Its
-black-box fixtures are intentionally usable by implementations in any
-language.
+Servers begin quarantined unless `trust: trusted` is explicit. Only the
+human CLI can change that field. Static `${ENV}` headers are resolved only at
+runtime. Interactive authorization-code OAuth with PKCE is available only for
+downstream HTTP and only through `moat auth`.
+
+OAuth state filenames are hashes of server names, directories are mode 0700,
+files are mode 0600, and credentials are keyed by authorization-server issuer.
+
+## Result boundary
+
+Downstream results are recursively redacted before forwarding. Protocol-hop
+metadata is removed. Results are rejected when their depth, entry count, or
+archive byte limit is exceeded. Oversized valid results receive a random opaque
+handle that can be fetched only under the same caller label and expires by TTL.
+
+## Coverage boundary
+
+Deterministic modules are held to the 80% line/function/branch release gate.
+`gateway.ts`, `gateway-runtime.ts`, `mcp-client.ts`, and interactive portions of
+`oauth.ts` cross child-process, dual-protocol, browser, and network boundaries;
+they are excluded from line-threshold arithmetic and instead must pass the
+black-box protocol matrix, process cleanup tests, OAuth state tests, and manual
+release checklist. This is an explicit test-method rationale, not an exemption
+from verification.

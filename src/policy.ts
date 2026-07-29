@@ -32,7 +32,14 @@ export function authorizeGateway(
   const agent = agentName?.trim() || "unknown";
   const target = `${server}:${tool}`;
   const policy = cfg.gatewayPolicy;
-  if (!policy) return { allowed: true, agent, target, reason: "no gateway policy configured" };
+  if (!policy) {
+    return {
+      allowed: false,
+      agent,
+      target,
+      reason: "deny because gateway policy is missing",
+    };
+  }
 
   const agentRule = policy.agents[agent];
   const wildcardRule = policy.agents["*"];
@@ -66,8 +73,12 @@ export function authorizeGateway(
     };
   }
 
-  const allowed = policy.default === "allow";
-  return { allowed, agent, target, reason: `${policy.default} by gateway default` };
+  return {
+    allowed: false,
+    agent,
+    target,
+    reason: "deny by gateway default",
+  };
 }
 
 export function requireGatewayAuthorization(

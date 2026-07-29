@@ -1,1 +1,0 @@
-{"version":1,"id":"pool-limit","driver":"mcp","operation":"pool_limit","input":{"gatewayLimits":{"maxPools":2,"maxPoolsPerServer":2,"idleTimeoutMs":60000},"server":{"mode":"normal"},"tool":"current_working_directory","arguments":{},"workingDirectories":3},"expected":{"ok":false,"error":{"code":"POOL_LIMIT"}}}

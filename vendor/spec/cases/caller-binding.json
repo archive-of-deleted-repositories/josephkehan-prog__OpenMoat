@@ -1,1 +1,0 @@
-{"version":1,"id":"caller-binding","driver":"mcp","operation":"caller_binding","input":{},"expected":{"ok":true,"callerArgument":false}}

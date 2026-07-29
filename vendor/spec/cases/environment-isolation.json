@@ -1,1 +1,0 @@
-{"version":1,"id":"environment-isolation","driver":"mcp","operation":"environment_isolation","input":{"gatewayEnvironment":{"OPENMOAT_AMBIENT_SECRET":"ambient-secret-sentinel"},"server":{"mode":"normal"},"tool":"inspect_environment","arguments":{"name":"OPENMOAT_AMBIENT_SECRET"}},"expected":{"ok":true,"text":"<missing>"},"redact":["ambient-secret-sentinel"]}

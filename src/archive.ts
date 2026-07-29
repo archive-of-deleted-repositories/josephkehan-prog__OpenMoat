@@ -1,47 +1,106 @@
-/**
- * CCR-style archive: oversized tool results are stored content-addressed in
- * SQLite instead of being truncated away. The agent gets the head plus a
- * hash, and can page through the rest with tool_result_fetch.
- */
-
 import crypto from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { OpenMoatConfig } from "./config.js";
 import { openStateDb } from "./db.js";
 
+const HANDLE = /^[a-f0-9]{48}$/;
+
+function ownerKey(owner: string): string {
+  return crypto.createHash("sha256").update(owner).digest("hex");
+}
+
 export class Archive {
   private db: DatabaseSync;
 
-  constructor(cfg: OpenMoatConfig) {
+  constructor(private cfg: OpenMoatConfig) {
     this.db = openStateDb(
       path.join(cfg.stateDir, "archive.db"),
-      "CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, content TEXT NOT NULL, bytes INTEGER NOT NULL, created INTEGER NOT NULL)"
-    );
-    const columns = this.db
-      .prepare("PRAGMA table_info(blobs)")
-      .all() as unknown as { name: string }[];
-    if (!columns.some((column) => column.name === "owner")) {
-      this.db.exec(
-        "ALTER TABLE blobs ADD COLUMN owner TEXT NOT NULL DEFAULT 'legacy-unscoped'"
+      `CREATE TABLE IF NOT EXISTS blobs (
+        hash TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        content TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        created INTEGER NOT NULL
       );
-    }
+      CREATE INDEX IF NOT EXISTS blobs_owner_created
+        ON blobs(owner, created);`
+    );
+  }
+
+  private removeExpired(owner?: string): number {
+    const cutoff = Date.now() - this.cfg.archiveLimits.ttlMs;
+    const result = owner
+      ? this.db
+          .prepare("DELETE FROM blobs WHERE owner = ? AND created < ?")
+          .run(ownerKey(owner), cutoff)
+      : this.db.prepare("DELETE FROM blobs WHERE created < ?").run(cutoff);
+    return Number(result.changes);
   }
 
   store(owner: string, text: string): string {
-    const hash = crypto
-      .createHash("sha256")
-      .update(owner)
-      .update("\0")
-      .update(text)
-      .digest("hex")
-      .slice(0, 16);
+    const bytes = Buffer.byteLength(text, "utf8");
+    if (bytes > this.cfg.archiveLimits.maxBlobBytes) {
+      throw new Error(
+        `RESULT_TOO_LARGE: ${bytes} bytes exceeds the archive blob limit`
+      );
+    }
+    const key = ownerKey(owner);
+    this.removeExpired(owner);
+
+    let usage = this.db
+      .prepare(
+        "SELECT COUNT(*) AS entries, COALESCE(SUM(bytes), 0) AS bytes FROM blobs WHERE owner = ?"
+      )
+      .get(key) as unknown as { entries: number; bytes: number };
+    while (
+      usage.entries >= this.cfg.archiveLimits.maxCallerEntries ||
+      usage.bytes + bytes > this.cfg.archiveLimits.maxCallerBytes
+    ) {
+      const oldest = this.db
+        .prepare(
+          "SELECT hash, bytes FROM blobs WHERE owner = ? ORDER BY created, hash LIMIT 1"
+        )
+        .get(key) as unknown as
+        | { hash: string; bytes: number }
+        | undefined;
+      if (!oldest) {
+        throw new Error("ARCHIVE_QUOTA: caller archive quota is exhausted");
+      }
+      this.db.prepare("DELETE FROM blobs WHERE hash = ?").run(oldest.hash);
+      usage = {
+        entries: usage.entries - 1,
+        bytes: usage.bytes - oldest.bytes,
+      };
+    }
+
+    const hash = crypto.randomBytes(24).toString("hex");
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO blobs(hash, content, bytes, created, owner) VALUES(?,?,?,?,?)"
+        "INSERT INTO blobs(hash, owner, content, bytes, created) VALUES(?,?,?,?,?)"
       )
-      .run(hash, text, text.length, Date.now(), owner);
+      .run(hash, key, text, bytes, Date.now());
     return hash;
+  }
+
+  private read(
+    owner: string,
+    hash: string
+  ): { content: string; bytes: number } | null {
+    if (!HANDLE.test(hash)) return null;
+    const row = this.db
+      .prepare(
+        "SELECT content, bytes, created FROM blobs WHERE hash = ? AND owner = ?"
+      )
+      .get(hash, ownerKey(owner)) as unknown as
+      | { content: string; bytes: number; created: number }
+      | undefined;
+    if (!row) return null;
+    if (Date.now() - row.created > this.cfg.archiveLimits.ttlMs) {
+      this.db.prepare("DELETE FROM blobs WHERE hash = ?").run(hash);
+      return null;
+    }
+    return row;
   }
 
   fetch(
@@ -50,49 +109,45 @@ export class Archive {
     offset = 0,
     limit = 8000
   ): { slice: string; total: number; remaining: number } | null {
-    const row = this.db
-      .prepare("SELECT content, bytes FROM blobs WHERE hash = ? AND owner = ?")
-      .get(hash, owner) as
-      | unknown as { content: string; bytes: number }
-      | undefined;
+    const row = this.read(owner, hash);
     if (!row) return null;
-    const slice = row.content.slice(offset, offset + limit);
-    return { slice, total: row.bytes, remaining: Math.max(0, row.bytes - offset - slice.length) };
+    const safeOffset = Math.max(0, Math.min(offset, row.content.length));
+    const safeLimit = Math.max(100, Math.min(limit, 30_000));
+    const slice = row.content.slice(safeOffset, safeOffset + safeLimit);
+    return {
+      slice,
+      total: row.bytes,
+      remaining: Math.max(
+        0,
+        row.content.length - safeOffset - slice.length
+      ),
+    };
   }
 
-  /** Content-aware retrieval (jmunch-style): search inside an archived blob
-   *  instead of paging blindly. Returns matching lines with char offsets. */
   find(
     owner: string,
     hash: string,
     pattern: string,
     maxMatches = 20
   ): { offset: number; line: string }[] | null {
-    const row = this.db
-      .prepare("SELECT content FROM blobs WHERE hash = ? AND owner = ?")
-      .get(hash, owner) as
-      | unknown as { content: string }
-      | undefined;
+    const row = this.read(owner, hash);
     if (!row) return null;
-    const needle = pattern.toLowerCase();
+    const needle = pattern.slice(0, 500).toLowerCase();
+    if (!needle) return [];
     const out: { offset: number; line: string }[] = [];
     let offset = 0;
     for (const line of row.content.split("\n")) {
       if (line.toLowerCase().includes(needle)) {
         out.push({ offset, line: line.slice(0, 300) });
-        if (out.length >= maxMatches) break;
+        if (out.length >= Math.min(Math.max(maxMatches, 1), 100)) break;
       }
       offset += line.length + 1;
     }
     return out;
   }
 
-  prune(days = 14): number {
-    const cutoff = Date.now() - days * 86400_000;
-    const before = (this.db.prepare("SELECT COUNT(*) n FROM blobs").get() as unknown as { n: number }).n;
-    this.db.prepare("DELETE FROM blobs WHERE created < ?").run(cutoff);
-    const after = (this.db.prepare("SELECT COUNT(*) n FROM blobs").get() as unknown as { n: number }).n;
-    return before - after;
+  prune(): number {
+    return this.removeExpired();
   }
 
   close(): void {
@@ -100,8 +155,14 @@ export class Archive {
   }
 }
 
-let cached: Archive | null = null;
+const cache = new Map<string, Archive>();
+
 export function getArchive(cfg: OpenMoatConfig): Archive {
-  if (!cached) cached = new Archive(cfg);
-  return cached;
+  const key = path.resolve(cfg.stateDir);
+  let archive = cache.get(key);
+  if (!archive) {
+    archive = new Archive(cfg);
+    cache.set(key, archive);
+  }
+  return archive;
 }

@@ -7,4 +7,4 @@ coverage/
 .env.*
 secrets.env
 state/
-
+.ouroboros/

@@ -1,94 +1,173 @@
 # OpenMoat
 
-OpenMoat is a local-first MCP gateway and shared agent configuration
-reconciler. TypeScript 0.4 is the supported complete implementation.
+OpenMoat is the local security gateway for MCP: one TypeScript process lets
+multiple local AI clients safely discover and call approved MCP servers through
+deny-by-default policy, quarantine, secret redaction, bounded execution, and
+deterministic cleanup.
 
-It extracts the reusable engineering from a private multi-agent setup without
-shipping workstation identity, live configuration, secrets, registries,
-runtime state, or logs.
+It supports outward stdio clients and downstream stdio or Streamable HTTP
+servers across MCP 2025-11-25 and stateless MCP 2026-07-28.
 
-## What it includes
+## Scope
 
-- Lazy, bounded MCP gateway with policy, quarantine, capability zones,
-  realpath-contained working directories, secret redaction, timeouts, health,
-  OAuth support, and complete child cleanup.
-- Reconciliation adapters for common coding-agent harnesses.
-- Shared profile and handoff support enabled by default.
-- Opt-in RAG, embeddings, skills, plugins, and instincts.
-- Federation, backups, health history, evaluation, and portable demos.
-- Optional chezmoi export; chezmoi is never required or invoked.
+OpenMoat v1 does one job: protect and multiplex local MCP access.
 
-## Install locally
+It includes:
+
+- One extensionless YAML `Moatfile`.
+- Deterministic `tool_search`, `tool_describe`, and `tool_call`.
+- Explicit caller allow/deny policy and capability zones.
+- Human-only quarantine approval and OAuth authorization.
+- Secret placeholder resolution and recursive output redaction.
+- Realpath-contained working directories, clean child environments, bounded
+  pools, deadlines, circuit breakers, and process-tree cleanup.
+- Caller-owned, quota- and TTL-bounded oversized-result archives.
+- Privacy-bounded aggregate health and usage.
+
+It does not include agent-configuration rewriting, harness adapters, profiles,
+handoffs, RAG, embeddings, skills, plugins, instincts, federation, evaluation,
+backups, or discovery marketplaces. Client configuration is deliberately
+documentation-only and non-mutating.
+
+## Requirements
+
+- Node.js 22 or newer
+- A local MCP client that can launch a stdio server
+
+## Install
+
+```sh
+npm install --global openmoat
+moat init ~/.config/openmoat
+export OPENMOAT_FILE="$HOME/.config/openmoat/Moatfile"
+moat validate
+moat doctor
+```
+
+For a source checkout:
 
 ```sh
 npm ci
 npm run build
-node dist/cli.js init
-node dist/cli.js --file ~/.config/openmoat/Moatfile validate
-node dist/cli.js --file ~/.config/openmoat/Moatfile doctor
+node dist/cli.js init /tmp/openmoat-config
 ```
 
-The npm package is `openmoat`; its only binary is `moat`. An unrelated npm
-package named `moat` exists, so use the package name when installing. No
-global installation is required.
-
 Configuration precedence is `--file`, then `OPENMOAT_FILE`, then
-`${XDG_CONFIG_HOME:-~/.config}/openmoat/Moatfile`. The canonical file is
-extensionless YAML with `apiVersion: openmoat.dev/v1`. Project overlays are not
-supported in 0.4.
+`${XDG_CONFIG_HOME:-~/.config}/openmoat/Moatfile`.
 
-All harness targets begin disabled. Review `moat detect`, then explicitly
-enable and apply only the targets you want.
+## Minimal configuration
 
-## Safety
+The starter denies every caller and has no servers. Add a server and a narrow
+caller rule:
 
-Caller policy is deny-by-default. New gateway servers are quarantined unless
-their `trust` is explicitly `trusted`. `${ENV}` values remain placeholders in
-configuration and are resolved only at runtime. Diagnostics must never print
-resolved values.
+```yaml
+apiVersion: openmoat.dev/v1
+kind: Moatfile
+paths:
+  state: ./state
+  secrets: ./secrets.env
+gateway:
+  callers:
+    codex:
+      allow: ["files:read_file"]
+      deny: ["files:write_file"]
+  servers:
+    files:
+      command: node
+      args: ["/absolute/path/to/files-server.mjs"]
+      cwdRoots: ["/absolute/path/to/approved/workspaces"]
+      capabilities: ["sensitive-read"]
+      trust: quarantined
+```
 
-Agent-facing MCP tools cannot approve trust, enable servers, apply
-configuration, synchronize harnesses, or rebuild shared indexes. Those
-operations remain human-only CLI commands. MCP `clientInfo` is a launcher
-or request policy label, not an authenticated principal. In modern MCP,
-OpenMoat resolves the label from each request's `clientInfo`; the
-`OPENMOAT_CALLER` environment variable remains a trusted local-launcher
-override. Neither mechanism authenticates another process running as the same
-operating-system user.
+Then review and approve it:
 
-The outward stdio server accepts MCP 2025-11-25 and MCP 2026-07-28 clients.
-Downstream connections negotiate either generation automatically. OpenMoat
-forwards complete tool-result envelopes, including `structuredContent` and
-safe `_meta` fields, after recursive secret redaction and removal of
-connection-hop protocol metadata.
+```sh
+moat validate
+moat trust files
+moat catalog --refresh
+moat doctor
+```
 
-OpenMoat is useful when several local models or coding harnesses need the same
-MCP capabilities without each one spawning its own copy of every server. The
-gateway keeps tool metadata out of the model context until search/describe is
-needed, lazily starts approved servers, reuses warm connections, and applies
-one local policy boundary. It saves model context; it does not make an
-untrusted local executable safe.
+`trust` is a human-only CLI mutation. No agent-facing MCP tool can approve a
+server or initiate OAuth.
 
-`context_save` provides small local handoffs without sending them to a hosted
-memory service. Agent-authored notes are size/count bounded, control-character
-sanitized, labeled as untrusted data, and isolated by the resolved caller
-policy label.
-They are continuity notes, not a substitute for a model context window or a
-trusted knowledge base. Promote reviewed durable facts into human-owned
-profile files.
+## Downstream HTTP and OAuth
 
-Optional features are absent from the MCP tool list until enabled in
-`Moatfile`; disabling RAG, skills, plugins, or instincts therefore removes
-their model-callable surface rather than merely disabling a background job.
+Pre-provisioned headers use unresolved placeholders:
 
-`moat migrate-config old.json Moatfile` copies configuration only. It never
-copies secrets, databases, OAuth tokens, archives, or other runtime state.
+```yaml
+    remote:
+      transport: http
+      url: https://mcp.example.com/mcp
+      headers:
+        Authorization: "Bearer ${REMOTE_MCP_TOKEN}"
+      trust: trusted
+```
 
-## Status
+Put `REMOTE_MCP_TOKEN=...` in the ignored, mode-0600 `secrets.env`. For
+authorization-code OAuth with PKCE, omit `headers` and run:
 
-OpenMoat TypeScript 0.4 is supported. The sibling Rust, Go, and Python
-repositories are experimental gateway-only comparisons and do not implement
-the shared-brain modules. Their MCP 2026-07-28 compatibility is not claimed
-until they independently pass the finalized conformance contract.
+```sh
+moat auth remote
+```
 
-MIT licensed; original attribution is preserved in [LICENSE](LICENSE).
+OAuth tokens, registrations, PKCE verifier, and discovery state are stored
+privately per server and bound to the discovered issuer. Agent calls never open
+a browser; they fail with a direction to run the human command.
+
+## Client snippets
+
+OpenMoat does not edit client configuration. Configure clients manually and set
+a stable local policy label:
+
+```json
+{
+  "mcpServers": {
+    "openmoat": {
+      "command": "moat",
+      "args": ["serve"],
+      "env": {
+        "OPENMOAT_FILE": "/absolute/path/to/Moatfile",
+        "OPENMOAT_CALLER": "codex"
+      }
+    }
+  }
+}
+```
+
+`OPENMOAT_CALLER` is a trusted local-launcher assertion. Without it, modern
+requests use per-request `clientInfo` and legacy requests use initialized
+`clientInfo`. These are policy labels, not cryptographic identities; processes
+running as the same operating-system user are not isolated from one another.
+
+## Commands and tools
+
+Human CLI: `init`, `validate`, `serve`, `doctor`, `auth`, `trust`, `catalog`,
+`usage`, and `list`.
+
+Agent tools: `tool_search`, `tool_describe`, `tool_call`,
+`tool_result_fetch`, `moat_health`, `moat_usage`, and `registry_list`.
+
+## Security boundary
+
+OpenMoat is a policy gateway, not an operating-system sandbox. Trusting a local
+MCP executable allows it to act with the current user's privileges. Use a
+separate account, container, or sandbox wrapper for untrusted code.
+
+See [SECURITY.md](SECURITY.md) and
+[docs/threat-model.md](docs/threat-model.md).
+
+## Release status
+
+The TypeScript repository is the sole supported implementation. The Go, Rust,
+and Python experiments are historical comparison evidence and are not part of
+the v1 product or package.
+
+Run the complete local release gate with:
+
+```sh
+npm run verify
+```
+
+MIT licensed.
