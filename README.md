@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/josephkehan-prog/OpenMoat/main/docs/assets/openmoat-banner.svg" width="100%" alt="OpenMoat — one gate, explicit trust, local control">
+  <img src="https://raw.githubusercontent.com/josephkehan-prog/OpenMoat/main/docs/assets/openmoat-gateway.svg" width="100%" alt="OpenMoat — one gate for your local AI tools">
 </p>
 
 <p align="center">
@@ -10,88 +10,74 @@
 </p>
 
 <p align="center">
-  <strong>One gate. Explicit trust. Local control.</strong>
+  <strong>Connect your AI tools without giving every tool every permission.</strong>
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
-  <a href="#use-case-tour">Use case</a> ·
-  <a href="#the-defensive-perimeter">Security model</a> ·
-  <a href="#minimal-moatfile">Configuration</a> ·
+  <a href="#a-practical-example">Example</a> ·
+  <a href="#how-openmoat-protects-a-call">How it works</a> ·
+  <a href="#configuration-example">Configuration</a> ·
   <a href="docs/threat-model.md">Threat model</a>
 </p>
 
-OpenMoat is the local security gateway for MCP: one TypeScript process lets
-multiple local AI clients safely discover and call approved MCP servers through
-deny-by-default policy, quarantine, secret redaction, bounded execution, and
-deterministic cleanup.
+OpenMoat sits between your local AI clients and MCP servers. You choose which
+clients may use which tools. OpenMoat blocks everything else, keeps new servers
+off by default, removes configured secrets from results, and cleans up child
+processes when a call ends.
 
-It supports outward stdio clients and downstream stdio or Streamable HTTP
-servers across MCP 2025-11-25 and stateless MCP 2026-07-28.
+Clients connect over stdio. OpenMoat can then reach local stdio servers or
+remote Streamable HTTP servers using MCP 2025-11-25 or stateless MCP
+2026-07-28.
 
 > [!IMPORTANT]
 > **v1 release candidate.** The source release is verified on macOS and Linux.
 > The npm package has not been published yet.
 
-## The defensive perimeter
+## How OpenMoat protects a call
 
-OpenMoat v1 does one job: protect and multiplex local MCP access.
+Every request passes through the same checks before an MCP server runs:
 
-| Layer | What it guards |
+| Check | What OpenMoat does |
 |---|---|
-| **Gatehouse** | Deny-by-default caller, server, tool, and zone policy |
-| **Drawbridge** | Human-only quarantine approval and OAuth authorization |
-| **Moat** | Secret redaction, clean child environments, and realpath-contained working directories |
-| **Portcullis** | Bounded pools, deadlines, circuit breakers, archives, and process cleanup |
-| **Watchtower** | Privacy-bounded health and aggregate usage without prompts or results |
+| **Who is asking?** | Rejects unknown clients. |
+| **What are they asking for?** | Checks the server, tool, and capability rules you wrote. |
+| **Did you approve the server?** | Keeps new servers quarantined until a person trusts them. |
+| **Is the call safe to run?** | Limits paths, runtime, concurrency, redirects, and child processes. |
+| **Is the result safe to return?** | Redacts configured secrets and stores oversized results behind private handles. |
 
-Every call crosses the same path:
+OpenMoat records health and totals, but not your prompts or tool results.
 
-```mermaid
-flowchart LR
-    A["Local AI client"] -->|"stdio"| B["OpenMoat gatehouse"]
-    B --> C{"Caller + zone + tool policy"}
-    C -->|"deny"| D["Blocked before spawn"]
-    C -->|"allow"| E{"Server trusted?"}
-    E -->|"quarantined"| D
-    E -->|"trusted"| F["Bounded MCP transport"]
-    F --> G["Approved stdio or HTTP server"]
-    G --> H["Redact + bound result"]
-    H --> A
-```
+## A practical example
 
-## Use case tour
+Suppose you use a coding assistant, a research assistant, and a desktop
+assistant. All three need MCP tools, but they should not have the same access.
 
-Imagine several local AI clients need the same MCP server, but they should not
-inherit the same authority.
+1. Add each MCP server to the `Moatfile`. New servers start in quarantine.
+2. Give each assistant only the tools it needs. A coding assistant might read
+   project files but never control the browser.
+3. Review the server command, working folders, network address, and requested
+   capabilities. Trust it only when those details look right.
+4. Point each assistant at OpenMoat instead of connecting it directly to every
+   server.
+5. OpenMoat checks every call, runs only approved tools, and cleans the result
+   before returning it.
 
-1. **Declare the server.** It enters the Moatfile as `quarantined`; no client
-   can call it yet.
-2. **Cut narrow keys.** Give each caller only the `server:tool` patterns and
-   capability zone it needs.
-3. **Raise the drawbridge once.** A human reviews the command, paths, network
-   reach, and capabilities, then runs `trust`.
-4. **Route through one gate.** Clients search, inspect, and call tools through
-   OpenMoat instead of spawning the downstream server directly.
-5. **Contain the return path.** Secrets are redacted, oversized results become
-   caller-bound handles, and failures feed bounded health controls.
-
-| Attempt | Outcome |
+| What happens | Result |
 |---|---|
-| An approved caller invokes an allowed tool | Routed to the trusted server |
-| An approved caller invokes a denied tool | Rejected before downstream spawn |
-| An unknown caller connects | Denied by default |
-| A server is still quarantined | Visible to the human, unavailable to agents |
-| A result contains configured secrets | Recursively redacted before return |
-| A result exceeds the inline limit | Stored privately behind a caller-bound handle |
+| An approved assistant calls an allowed tool | OpenMoat sends the call to the trusted server. |
+| An assistant asks for a tool it cannot use | OpenMoat rejects the call before starting the server. |
+| An unknown assistant connects | OpenMoat denies it. |
+| A server is still quarantined | Assistants cannot use it. |
+| A result contains one of your configured secrets | OpenMoat replaces the secret before returning the result. |
+| A result is too large to return inline | OpenMoat stores it privately and returns a caller-specific handle. |
 
-The pattern is intentionally general: filesystem tools, databases, internal
-APIs, browser automation, and other MCP servers all cross the same gate.
+The same setup works for file tools, databases, internal APIs, browser
+automation, and other MCP servers.
 
-It does not include agent-configuration rewriting, harness adapters, profiles,
-handoffs, RAG, embeddings, skills, plugins, instincts, federation, evaluation,
-backups, or discovery marketplaces. Client configuration is deliberately
-documentation-only and non-mutating.
+OpenMoat does not rewrite your AI client settings or manage prompts, profiles,
+skills, plugins, handoffs, RAG, embeddings, backups, or marketplaces. You stay
+in control of client configuration.
 
 ## Quick start
 
@@ -113,10 +99,10 @@ node dist/cli.js doctor
 Configuration precedence is `--file`, then `OPENMOAT_FILE`, then
 `${XDG_CONFIG_HOME:-~/.config}/openmoat/Moatfile`.
 
-## Minimal Moatfile
+## Configuration example
 
-The starter denies every caller and has no servers. Add a server and a narrow
-caller rule:
+The starter configuration denies every client and contains no servers. This
+example lets one coding assistant read project files but not change them:
 
 ```yaml
 apiVersion: openmoat.dev/v1
@@ -126,14 +112,14 @@ paths:
   secrets: ./secrets.env
 gateway:
   callers:
-    codex:
-      allow: ["files:read_file"]
-      deny: ["files:write_file"]
+    coding-assistant:
+      allow: ["project-files:read_file"]
+      deny: ["project-files:write_file"]
   servers:
-    files:
+    project-files:
       command: node
-      args: ["/absolute/path/to/files-server.mjs"]
-      cwdRoots: ["/absolute/path/to/approved/workspaces"]
+      args: ["/absolute/path/to/filesystem-server.mjs"]
+      cwdRoots: ["/absolute/path/to/your-projects"]
       capabilities: ["sensitive-read"]
       trust: quarantined
 ```
@@ -142,7 +128,7 @@ Then review and approve it:
 
 ```bash
 node dist/cli.js validate
-node dist/cli.js trust files
+node dist/cli.js trust project-files
 node dist/cli.js catalog --refresh
 node dist/cli.js doctor
 node dist/cli.js serve
