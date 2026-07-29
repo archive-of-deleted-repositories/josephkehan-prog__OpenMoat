@@ -1,8 +1,25 @@
-# OpenMoat
+<p align="center">
+  <img src="https://raw.githubusercontent.com/josephkehan-prog/OpenMoat/main/docs/assets/openmoat-banner.svg" width="100%" alt="OpenMoat — one gate, explicit trust, local control">
+</p>
 
-[![CI](https://github.com/josephkehan-prog/OpenMoat/actions/workflows/ci.yml/badge.svg)](https://github.com/josephkehan-prog/OpenMoat/actions/workflows/ci.yml)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/josephkehan-prog/OpenMoat/actions/workflows/ci.yml"><img src="https://github.com/josephkehan-prog/OpenMoat/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&amp;logoColor=white" alt="Node.js 22 or newer"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-38bdf8.svg" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/MCP-2025--11--25%20%7C%202026--07--28-f59e0b" alt="Supported MCP versions">
+</p>
+
+<p align="center">
+  <strong>One gate. Explicit trust. Local control.</strong>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#use-case-tour">Use case</a> ·
+  <a href="#the-defensive-perimeter">Security model</a> ·
+  <a href="#minimal-moatfile">Configuration</a> ·
+  <a href="docs/threat-model.md">Threat model</a>
+</p>
 
 OpenMoat is the local security gateway for MCP: one TypeScript process lets
 multiple local AI clients safely discover and call approved MCP servers through
@@ -12,31 +29,71 @@ deterministic cleanup.
 It supports outward stdio clients and downstream stdio or Streamable HTTP
 servers across MCP 2025-11-25 and stateless MCP 2026-07-28.
 
-> **Status:** v1 release candidate. The source release is verified; the npm
-> package has not been published yet.
+> [!IMPORTANT]
+> **v1 release candidate.** The source release is verified on macOS and Linux.
+> The npm package has not been published yet.
 
-## What OpenMoat does
+## The defensive perimeter
 
 OpenMoat v1 does one job: protect and multiplex local MCP access.
 
-It includes:
+| Layer | What it guards |
+|---|---|
+| **Gatehouse** | Deny-by-default caller, server, tool, and zone policy |
+| **Drawbridge** | Human-only quarantine approval and OAuth authorization |
+| **Moat** | Secret redaction, clean child environments, and realpath-contained working directories |
+| **Portcullis** | Bounded pools, deadlines, circuit breakers, archives, and process cleanup |
+| **Watchtower** | Privacy-bounded health and aggregate usage without prompts or results |
 
-- One extensionless YAML `Moatfile`.
-- Deterministic `tool_search`, `tool_describe`, and `tool_call`.
-- Explicit caller allow/deny policy and capability zones.
-- Human-only quarantine approval and OAuth authorization.
-- Secret placeholder resolution and recursive output redaction.
-- Realpath-contained working directories, clean child environments, bounded
-  pools, deadlines, circuit breakers, and process-tree cleanup.
-- Caller-owned, quota- and TTL-bounded oversized-result archives.
-- Privacy-bounded aggregate health and usage.
+Every call crosses the same path:
+
+```mermaid
+flowchart LR
+    A["Local AI client"] -->|"stdio"| B["OpenMoat gatehouse"]
+    B --> C{"Caller + zone + tool policy"}
+    C -->|"deny"| D["Blocked before spawn"]
+    C -->|"allow"| E{"Server trusted?"}
+    E -->|"quarantined"| D
+    E -->|"trusted"| F["Bounded MCP transport"]
+    F --> G["Approved stdio or HTTP server"]
+    G --> H["Redact + bound result"]
+    H --> A
+```
+
+## Use case tour
+
+Imagine several local AI clients need the same MCP server, but they should not
+inherit the same authority.
+
+1. **Declare the server.** It enters the Moatfile as `quarantined`; no client
+   can call it yet.
+2. **Cut narrow keys.** Give each caller only the `server:tool` patterns and
+   capability zone it needs.
+3. **Raise the drawbridge once.** A human reviews the command, paths, network
+   reach, and capabilities, then runs `trust`.
+4. **Route through one gate.** Clients search, inspect, and call tools through
+   OpenMoat instead of spawning the downstream server directly.
+5. **Contain the return path.** Secrets are redacted, oversized results become
+   caller-bound handles, and failures feed bounded health controls.
+
+| Attempt | Outcome |
+|---|---|
+| An approved caller invokes an allowed tool | Routed to the trusted server |
+| An approved caller invokes a denied tool | Rejected before downstream spawn |
+| An unknown caller connects | Denied by default |
+| A server is still quarantined | Visible to the human, unavailable to agents |
+| A result contains configured secrets | Recursively redacted before return |
+| A result exceeds the inline limit | Stored privately behind a caller-bound handle |
+
+The pattern is intentionally general: filesystem tools, databases, internal
+APIs, browser automation, and other MCP servers all cross the same gate.
 
 It does not include agent-configuration rewriting, harness adapters, profiles,
 handoffs, RAG, embeddings, skills, plugins, instincts, federation, evaluation,
 backups, or discovery marketplaces. Client configuration is deliberately
 documentation-only and non-mutating.
 
-## Install from source
+## Quick start
 
 - Node.js 22 or newer
 - Git
@@ -56,7 +113,7 @@ node dist/cli.js doctor
 Configuration precedence is `--file`, then `OPENMOAT_FILE`, then
 `${XDG_CONFIG_HOME:-~/.config}/openmoat/Moatfile`.
 
-## Minimal configuration
+## Minimal Moatfile
 
 The starter denies every caller and has no servers. Add a server and a narrow
 caller rule:

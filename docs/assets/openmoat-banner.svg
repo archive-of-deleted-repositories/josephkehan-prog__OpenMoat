@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title description">
+  <title id="title">OpenMoat</title>
+  <desc id="description">A fortified gate surrounded by a cyan moat with the words OpenMoat, one gate, explicit trust, local control.</desc>
+  <defs>
+    <linearGradient id="night" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.55" stop-color="#0b1f33"/>
+      <stop offset="1" stop-color="#102a43"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0ea5e9" stop-opacity="0.35"/>
+      <stop offset="0.5" stop-color="#67e8f9" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#0ea5e9" stop-opacity="0.35"/>
+    </linearGradient>
+    <linearGradient id="gate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="360" rx="28" fill="url(#night)"/>
+  <path d="M0 286 C165 246 325 326 505 282 C700 234 885 323 1200 263 V360 H0Z" fill="#071827"/>
+  <path d="M0 296 C176 254 330 337 512 292 C704 245 900 332 1200 272" fill="none" stroke="url(#water)" stroke-width="20" opacity="0.8"/>
+  <path d="M0 306 C176 264 330 347 512 302 C704 255 900 342 1200 282" fill="none" stroke="#67e8f9" stroke-width="2" opacity="0.72"/>
+
+  <g transform="translate(92 56)">
+    <ellipse cx="150" cy="224" rx="144" ry="50" fill="#38bdf8" opacity="0.12" filter="url(#glow)"/>
+    <ellipse cx="150" cy="222" rx="136" ry="42" fill="none" stroke="#67e8f9" stroke-width="7" opacity="0.82"/>
+    <ellipse cx="150" cy="222" rx="108" ry="31" fill="#07111f" stroke="#0ea5e9" stroke-width="2"/>
+
+    <path d="M62 83 H99 V55 H126 V83 H174 V55 H201 V83 H238 V206 H62Z" fill="#cbd5e1"/>
+    <path d="M77 101 H223 V206 H77Z" fill="#94a3b8"/>
+    <path d="M51 83 H110 V206 H51Z M190 83 H249 V206 H190Z" fill="#b8c5d1"/>
+    <path d="M51 83 V57 H70 V72 H91 V57 H110 V83 M190 83 V57 H209 V72 H230 V57 H249 V83" fill="#cbd5e1"/>
+    <path d="M118 206 V151 C118 133 132 119 150 119 C168 119 182 133 182 151 V206Z" fill="#0b1f33"/>
+    <path d="M128 206 V154 C128 142 138 132 150 132 C162 132 172 142 172 154 V206Z" fill="url(#gate)"/>
+    <path d="M136 146 H164 M136 159 H164 M136 172 H164 M136 185 H164" stroke="#7c2d12" stroke-width="4" opacity="0.65"/>
+    <path d="M150 133 V205" stroke="#7c2d12" stroke-width="4" opacity="0.65"/>
+    <circle cx="94" cy="113" r="8" fill="#0b1f33"/>
+    <circle cx="206" cy="113" r="8" fill="#0b1f33"/>
+    <path d="M42 208 H258" stroke="#e2e8f0" stroke-width="8" stroke-linecap="round"/>
+    <path d="M109 208 L78 244 M191 208 L222 244" stroke="#f59e0b" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <g transform="translate(410 92)">
+    <text x="0" y="78" fill="#f8fafc" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="68" font-weight="750" letter-spacing="-3">OPENMOAT</text>
+    <rect x="2" y="101" width="650" height="3" rx="2" fill="#38bdf8" opacity="0.85"/>
+    <text x="2" y="145" fill="#bae6fd" font-family="ui-sans-serif, system-ui, sans-serif" font-size="17" font-weight="650" letter-spacing="0.4">ONE GATE · EXPLICIT TRUST · LOCAL CONTROL</text>
+    <text x="2" y="180" fill="#94a3b8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="17">A deny-by-default security gateway for MCP</text>
+  </g>
+
+  <circle cx="1126" cy="62" r="3" fill="#67e8f9" opacity="0.8"/>
+  <circle cx="1089" cy="96" r="2" fill="#67e8f9" opacity="0.55"/>
+  <circle cx="1155" cy="126" r="2" fill="#fbbf24" opacity="0.65"/>
+</svg>
