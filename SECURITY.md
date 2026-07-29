@@ -17,6 +17,11 @@ tool results, errors, health, and catalog diagnostics. Agent MCP calls cannot
 perform trust, enablement, synchronization, configuration application, or
 shared-index administration.
 
+Agent-authored context writes are isolated by launcher caller identity, bounded
+by per-caller count and byte quotas, stored mode 0600, and labeled as untrusted
+data on read. A caller cannot retrieve another caller's notes through
+`context_latest` or context-backed RAG results.
+
 Never place secrets directly in `Moatfile`. Use `${NAME}` and provide the value
 through the environment or a mode-0600 ignored `secrets.env`.
 

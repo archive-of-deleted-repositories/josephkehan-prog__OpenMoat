@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getArchive } from "./archive.js";
 import { compressText } from "./compress.js";
 import type { HubConfig } from "./config.js";
+import { ContextStore } from "./context-store.js";
 import {
   federatedPlugins,
   federatedServers,
@@ -58,24 +59,11 @@ export function recentUsageEvents(cfg: HubConfig, n: number): string {
     .join("\n");
 }
 
-function latestContextFiles(contextDir: string, n: number): string[] {
-  if (!fs.existsSync(contextDir)) return [];
-  return fs
-    .readdirSync(contextDir)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => {
-      const file = path.join(contextDir, f);
-      return { file, mtime: fs.statSync(file).mtimeMs }; // stat once, not per comparison
-    })
-    .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, n)
-    .map((e) => e.file);
-}
-
 export async function serve(cfg: HubConfig): Promise<void> {
   const server = new McpServer({ name: "openmoat", version: HUB_VERSION });
   const rag = new Rag(cfg);
   const gatewayRuntime = createGatewayRuntime(cfg);
+  const contextStore = new ContextStore(cfg.contextDir);
 
   // Who is calling: OPENMOAT_CALLER override, else the MCP clientInfo sent by the
   // harness during initialize. Lazy — clientInfo only exists after the
@@ -101,8 +89,12 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
         if (!fs.existsSync(f)) continue;
         parts.push(`## ${path.basename(f)}\n${fs.readFileSync(f, "utf8").slice(0, 4000)}`);
       }
-      const latest = latestContextFiles(cfg.contextDir, 1)[0];
-      if (latest) parts.push(`## Latest context handoff (${path.basename(latest)})\n${fs.readFileSync(latest, "utf8").slice(0, 4000)}`);
+      const latest = contextStore.latest(agentName(), 1)[0];
+      if (latest) {
+        parts.push(
+          `## Latest caller-scoped context (${latest.relativePath})\n${latest.content.slice(0, 4000)}`
+        );
+      }
       const skills = federatedSkills(cfg);
       parts.push(
         `## Skills (${skills.length} selected, pull-only)\nNot preloaded. When a task matches one, call skills_list to see them, then skill_read to load it. Qualified source/name ids remain available when catalogs overlap.`
@@ -121,7 +113,15 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     },
     async ({ query, k }) => {
       await rag.index(); // incremental — cheap when nothing changed
-      const hits = await rag.search(query, k ?? 6);
+      const hits = (await rag.search(query, (k ?? 6) * 3))
+        .filter(
+          (hit) =>
+            !path
+              .resolve(hit.file)
+              .startsWith(`${path.resolve(cfg.contextDir)}${path.sep}`) ||
+            contextStore.owns(agentName(), hit.file)
+        )
+        .slice(0, k ?? 6);
       logUsage(cfg, { tool: "rag_search", agent: agentName(), query, topScore: hits[0]?.score ?? 0 });
       if (!hits.length) return text("No matches.");
       return text(hits.map((h) => `[${h.score}] ${h.file} › ${h.heading}\n${h.snippet}`).join("\n\n---\n\n"));
@@ -454,33 +454,36 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     "context_save",
     {
       description:
-        "Preserve context for the next agent/session: write a dated handoff note to the shared memory folder. Use at the end of significant work (what was done, decisions, open items).",
+        "Preserve bounded context for the next session launched with the same caller identity. Notes are isolated by caller and labeled as untrusted agent-authored data.",
       inputSchema: { title: z.string(), content: z.string() },
     },
     async ({ title, content }) => {
-      const d = new Date();
-      const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
-      const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
-      fs.mkdirSync(cfg.contextDir, { recursive: true });
-      let file = path.join(cfg.contextDir, `${stamp}-${slug}.md`);
-      // Never overwrite an existing handoff (same title, same second).
-      for (let i = 2; fs.existsSync(file); i++) file = path.join(cfg.contextDir, `${stamp}-${slug}-${i}.md`);
-      fs.writeFileSync(file, `# ${title}\n\n_Saved by openmoat · ${d.toISOString()}_\n\n${content}\n`, "utf8");
+      const saved = contextStore.save(agentName(), title, content);
       await rag.index(); // make it searchable immediately
-      return text(`saved ${file} (indexed for rag_search)`);
+      return text(
+        `saved caller-scoped context ${saved.relativePath} (indexed for rag_search)`
+      );
     }
   );
 
   server.registerTool(
     "context_latest",
     {
-      description: "Read the most recent context handoff notes (default 3).",
+      description:
+        "Read the most recent context notes written by this same caller identity (default 3).",
       inputSchema: { n: z.number().int().min(1).max(10).optional() },
     },
     async ({ n }) => {
-      const files = latestContextFiles(cfg.contextDir, n ?? 3);
-      if (!files.length) return text("No context notes yet.");
-      return text(files.map((f) => `## ${path.basename(f)}\n${fs.readFileSync(f, "utf8").slice(0, 5000)}`).join("\n\n"));
+      const notes = contextStore.latest(agentName(), n ?? 3);
+      if (!notes.length) return text("No caller-scoped context notes yet.");
+      return text(
+        notes
+          .map(
+            (note) =>
+              `## ${note.relativePath}\n${note.content.slice(0, 5000)}`
+          )
+          .join("\n\n")
+      );
     }
   );
 

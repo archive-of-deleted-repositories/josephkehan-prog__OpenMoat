@@ -60,6 +60,13 @@ needed, lazily starts approved servers, reuses warm connections, and applies
 one local policy boundary. It saves model context; it does not make an
 untrusted local executable safe.
 
+`context_save` provides small local handoffs without sending them to a hosted
+memory service. Agent-authored notes are size/count bounded, control-character
+sanitized, labeled as untrusted data, and isolated by launcher caller identity.
+They are continuity notes, not a substitute for a model context window or a
+trusted knowledge base. Promote reviewed durable facts into human-owned
+profile files.
+
 `moat migrate-config old.json Moatfile` copies configuration only. It never
 copies secrets, databases, OAuth tokens, archives, or other runtime state.
 
