@@ -84,6 +84,41 @@ gateway:
       () => loadConfigFile(insecure),
       /cannot set stdio process fields/
     );
+
+    fs.writeFileSync(
+      insecure,
+      fs
+        .readFileSync(insecure, "utf8")
+        .replace("https://example.com", "https://user:password@example.com")
+        .replace("      command: node\n", "")
+    );
+    assert.throws(
+      () => loadConfigFile(insecure),
+      /must not contain embedded credentials/
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("configuration and secret inputs have explicit size limits", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-size-"));
+  try {
+    const config = path.join(root, "Moatfile");
+    fs.writeFileSync(config, "x".repeat(1024 * 1024 + 1));
+    assert.throws(
+      () => loadConfigFile(config),
+      /exceeds 1048576 bytes/
+    );
+
+    const secrets = path.join(root, "secrets.env");
+    fs.writeFileSync(secrets, `TOKEN=${"x".repeat(1024 * 1024)}`, {
+      mode: 0o600,
+    });
+    assert.throws(
+      () => loadSecrets(secrets),
+      /exceeds 1048576 bytes/
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

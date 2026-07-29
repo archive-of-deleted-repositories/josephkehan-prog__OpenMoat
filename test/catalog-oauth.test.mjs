@@ -12,7 +12,10 @@ import {
   refreshCatalog,
   searchCatalog,
 } from "../dist/catalog.js";
-import { FileOAuthProvider } from "../dist/oauth.js";
+import {
+  browserLaunchCommand,
+  FileOAuthProvider,
+} from "../dist/oauth.js";
 
 async function unusedPort() {
   const server = http.createServer();
@@ -148,6 +151,17 @@ test("OAuth callback port validation rejects unsafe values", () => {
     if (previous === undefined) delete process.env.OPENMOAT_OAUTH_PORT;
     else process.env.OPENMOAT_OAUTH_PORT = previous;
   }
+});
+
+test("browser launch never passes an authorization URL through a command shell", () => {
+  const url = "https://issuer.example/authorize?state=safe&x=1";
+  const launch = browserLaunchCommand("win32", url);
+  assert.equal(launch.command, "rundll32.exe");
+  assert.deepEqual(launch.args, [
+    "url.dll,FileProtocolHandler",
+    url,
+  ]);
+  assert.notEqual(launch.command, "cmd");
 });
 
 test("OAuth state is random, enforced once, and closes the callback listener", async () => {

@@ -134,3 +134,19 @@ test("starter refuses non-empty destinations unless force is explicit", () => {
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test("starter force mode refuses managed-path symlinks", () => {
+  const temp = fs.mkdtempSync(path.join(process.env.TMPDIR ?? "/tmp", "openmoat-link-"));
+  const target = path.join(temp, "outside-owned.txt");
+  try {
+    fs.writeFileSync(target, "preserve");
+    fs.symlinkSync(target, path.join(temp, "Moatfile"));
+    assert.throws(
+      () => initWorkspace(temp, true),
+      /symbolic link/
+    );
+    assert.equal(fs.readFileSync(target, "utf8"), "preserve");
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
