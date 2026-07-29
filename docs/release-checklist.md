@@ -30,6 +30,11 @@ checklist. Those are separate maintainer actions.
 - [ ] oversized result is bounded and cross-caller fetch fails
 - [ ] malformed and retired Moatfile fields fail
 - [ ] symlink cwd escape fails
+- [ ] `init --force` refuses managed-path symlinks without modifying targets
+- [ ] embedded HTTP credentials and oversized config/secret files fail
+- [ ] hostile tool descriptions cannot forge catalog entries
+- [ ] tool-description output is capped at 128 valid MCP tool identifiers
+- [ ] browser launch never passes authorization URLs through a shell
 - [ ] pool, timeout, breaker, and cleanup behavior passes
 - [ ] interactive OAuth callback completes against a controlled test issuer
 - [ ] OAuth cancellation/timeout closes the callback listener

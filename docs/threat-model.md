@@ -22,15 +22,16 @@ boundary and can impersonate policy labels.
 |---|---|---|
 | Policy bypass | deny default, deny precedence, per-request caller resolution, pre-spawn authorization | policy unit tests; unauthorized black-box call |
 | Discovery/call TOCTOU | search and describe filter current config; call re-authorizes current config before spawn | protocol tests and code review |
-| Path or symlink escape | realpath both candidate and roots; reject undeclared caller cwd | runtime security tests |
-| Command or argument injection | direct argv spawn; no shell; bounded schema fields | configuration tests and code review |
+| Path or symlink escape | realpath both candidate and roots; reject undeclared caller cwd; reject symlinks at all `init --force` managed paths before writing | runtime security and starter attack tests |
+| Command or argument injection | direct argv spawn; shell-free browser launch; bounded schema fields | configuration and browser-command tests |
 | Secret leakage | minimal child env, runtime placeholder resolution, recursive value/key redaction, coarse diagnostics | redaction and protocol-envelope tests |
+| Credential-bearing or oversized configuration | reject URL userinfo; cap Moatfile and secrets files at 1 MiB | configuration boundary tests |
 | OAuth callback/state/issuer confusion | random one-time state, loopback callback, PKCE, hashed filenames, per-issuer credential maps, bounded port | state/liveness tests and controlled-issuer release probe |
 | Oversized or adversarial result | depth, entry, byte, paging, owner quota, entry quota, TTL | archive and envelope tests |
 | Pool, timeout, breaker exhaustion | global/per-server pool limits, per-server concurrency, deadlines, idle reap, persisted breakers | runtime and health tests |
 | Malformed protocol or downgrade confusion | official SDK dual-era negotiation; hop metadata removed | legacy/modern outward/downstream matrix |
 | Orphan process trees | descendant reaping on negotiation disposal, eviction, EOF, signal, and parent loss | protocol fixture and manual process check |
-| Catalog prompt injection | catalog refresh only from trusted servers; metadata label/sanitize/bound; caller policy filter | catalog and sanitization tests |
+| Catalog prompt injection or amplification | catalog refresh only from trusted servers; strict MCP tool identifiers; indentation prevents forged headings; 128-tool cap; metadata label/sanitize/bound; caller policy filter | hostile HTTP fixture, catalog, and sanitization tests |
 | Cross-caller archive access | random opaque handle plus hashed owner binding | caller-isolation tests |
 
 ## Residual risk

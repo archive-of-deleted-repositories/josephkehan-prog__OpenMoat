@@ -15,14 +15,19 @@ Supported security fixes target the latest v1 release.
   inherited names.
 - Caller-supplied working directories must realpath-resolve beneath declared
   roots; symlink escapes fail.
-- Non-loopback HTTP requires HTTPS.
+- `moat init --force` refuses symbolic links at every managed destination.
+- Non-loopback HTTP requires HTTPS; HTTP URLs cannot embed credentials.
+- Moatfile and secrets inputs are each limited to 1 MiB.
 - `${ENV}` placeholders resolve at runtime and unresolved values fail closed.
-- Tool metadata is bounded, control-character sanitized, and labeled untrusted.
+- Tool metadata uses the MCP 128-character identifier grammar, is capped at 128
+  tools per description, structurally indented to prevent forged catalog
+  headings, control-character sanitized, and labeled untrusted.
 - Result values and keys are recursively redacted.
 - Result archives are private, opaque, caller-bound, quota-bounded, and
   TTL-bounded.
 - OAuth state is private, server-path-safe, issuer-bound, PKCE-protected, and
   loopback-callback state checked.
+- Browser launch uses direct argument vectors without a command shell.
 - Pools, concurrency, deadlines, circuit breakers, and shutdown cleanup are
   bounded.
 - Usage exposes aggregate counts, coarse errors, timings, and recency—not
