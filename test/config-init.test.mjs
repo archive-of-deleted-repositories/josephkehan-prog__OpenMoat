@@ -50,6 +50,8 @@ test("initWorkspace creates isolated starter and refuses accidental overwrite", 
     assert.ok(fs.existsSync(path.join(destination, "profile/AGENTS.md")));
     assert.ok(fs.existsSync(path.join(destination, "plugins")));
     assert.equal(fs.statSync(path.join(destination, "secrets.env")).mode & 0o077, 0);
+    assert.equal(fs.statSync(path.join(destination, "state")).mode & 0o077, 0);
+    assert.equal(fs.statSync(path.join(destination, "context")).mode & 0o077, 0);
     assert.match(fs.readFileSync(path.join(destination, "secrets.env"), "utf8"), /^#/);
     const cfg = loadConfig(result.dir);
     assert.equal(cfg.pluginsDir, path.join(destination, "plugins"));
