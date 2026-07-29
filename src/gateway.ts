@@ -19,6 +19,7 @@ import { getHealth } from "./health.js";
 import { makeTransport } from "./mcp-client.js";
 import { FileOAuthProvider } from "./oauth.js";
 import { requireGatewayAuthorization } from "./policy.js";
+import { descendantPids, killProcessTree } from "./process-tree.js";
 import {
   resolveWorkingDirectory,
   sanitizeMetadata,
@@ -99,47 +100,9 @@ function filterToolResult(
     : withoutMeta;
 }
 
-/** All descendant pids of `pid` (children, grandchildren, …), breadth-first. */
-function descendants(pid: number): number[] {
-  const out: number[] = [];
-  const stack = [pid];
-  while (stack.length) {
-    const parent = stack.pop()!;
-    let children: number[] = [];
-    try {
-      children = execFileSync("pgrep", ["-P", String(parent)], { timeout: 1000 })
-        .toString()
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .map(Number);
-    } catch {
-      // No children.
-    }
-    for (const child of children) {
-      out.push(child);
-      stack.push(child);
-    }
-  }
-  return out;
-}
-
 function killEntry(entry: PoolEntry): number[] {
   if (entry.pid === undefined) return [];
   return killProcessTree(entry.pid);
-}
-
-function killProcessTree(rootPid: number): number[] {
-  const killed: number[] = [];
-  for (const pid of [...descendants(rootPid).reverse(), rootPid]) {
-    try {
-      process.kill(pid, "SIGKILL");
-      killed.push(pid);
-    } catch {
-      // Already gone.
-    }
-  }
-  return killed;
 }
 
 function evict(poolKey: string, close = true): number[] {
@@ -209,7 +172,7 @@ export function gatewayHealth(cfg: OpenMoatConfig): GatewayHealth {
     const children = entries.reduce(
       (count, entry) =>
         count +
-        (entry.pid === undefined ? 0 : 1 + descendants(entry.pid).length),
+        (entry.pid === undefined ? 0 : 1 + descendantPids(entry.pid).length),
       0
     );
     servers[name] = {
