@@ -6,5 +6,5 @@ for case_file in vendor/spec/cases/*.json; do
   set -- "$@" --case "$case_file"
 done
 
-PYTHONPATH=vendor/spec uv run --with pyyaml --with jsonschema \
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=vendor/spec uv run --with pyyaml --with jsonschema \
   python -m conformance.runner "$@" --timeout 10 --json

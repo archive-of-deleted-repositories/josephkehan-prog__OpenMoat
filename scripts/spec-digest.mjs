@@ -7,6 +7,9 @@ const root = path.resolve(process.argv[2] ?? "vendor/spec");
 
 function files(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name === "__pycache__" || entry.name.endsWith(".pyc")) {
+      return [];
+    }
     const absolute = path.join(directory, entry.name);
     return entry.isDirectory() ? files(absolute) : [absolute];
   });
@@ -20,4 +23,3 @@ for (const file of files(root).sort()) {
   digest.update("\0");
 }
 console.log(digest.digest("hex"));
-
