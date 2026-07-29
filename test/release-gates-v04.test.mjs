@@ -6,6 +6,7 @@ test("CI delegates release review to the complete canonical verifier", () => {
   const workflow = fs.readFileSync(".github/workflows/ci.yml", "utf8");
 
   assert.match(workflow, /npm run verify/);
+  assert.match(workflow, /permissions:\s*\n\s+contents: read/);
 });
 
 test("canonical coverage measures the v0.4 gateway and server paths", () => {
