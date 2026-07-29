@@ -93,6 +93,41 @@ async function startFixture(
   };
 }
 
+test("HTTP transport refuses redirects to a different origin", async () => {
+  let targetReached = false;
+  const target = http.createServer((_request, response) => {
+    targetReached = true;
+    response.writeHead(200).end("unexpected");
+  });
+  await new Promise((resolve) =>
+    target.listen(0, "127.0.0.1", resolve)
+  );
+  const source = http.createServer((_request, response) => {
+    response.writeHead(307, {
+      location: `http://127.0.0.1:${target.address().port}/internal`,
+    });
+    response.end();
+  });
+  await new Promise((resolve) =>
+    source.listen(0, "127.0.0.1", resolve)
+  );
+  try {
+    const { sameOriginFetch } = await import("../dist/mcp-client.js");
+    assert.equal(typeof sameOriginFetch, "function");
+    const sourceUrl = new URL(
+      `http://127.0.0.1:${source.address().port}/mcp`
+    );
+    await assert.rejects(
+      sameOriginFetch(sourceUrl)(sourceUrl, { method: "POST", body: "{}" }),
+      /HTTP_REDIRECT_BLOCKED/
+    );
+    assert.equal(targetReached, false);
+  } finally {
+    await new Promise((resolve) => source.close(resolve));
+    await new Promise((resolve) => target.close(resolve));
+  }
+});
+
 test("downstream tool metadata cannot forge catalog entries or amplify output without bound", async () => {
   const fixture = await startFixture("2026-07-28", {
     toolCount: 140,
