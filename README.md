@@ -1,7 +1,7 @@
 # OpenMoat
 
 OpenMoat is a local-first MCP gateway and shared agent configuration
-reconciler. TypeScript 0.3 is the supported complete implementation.
+reconciler. TypeScript 0.4 is the supported complete implementation.
 
 It extracts the reusable engineering from a private multi-agent setup without
 shipping workstation identity, live configuration, secrets, registries,
@@ -35,7 +35,7 @@ global installation is required.
 Configuration precedence is `--file`, then `OPENMOAT_FILE`, then
 `${XDG_CONFIG_HOME:-~/.config}/openmoat/Moatfile`. The canonical file is
 extensionless YAML with `apiVersion: openmoat.dev/v1`. Project overlays are not
-supported in 0.3.
+supported in 0.4.
 
 All harness targets begin disabled. Review `moat detect`, then explicitly
 enable and apply only the targets you want.
@@ -50,8 +50,17 @@ resolved values.
 Agent-facing MCP tools cannot approve trust, enable servers, apply
 configuration, synchronize harnesses, or rebuild shared indexes. Those
 operations remain human-only CLI commands. MCP `clientInfo` is a launcher
-policy label, not authentication against another process running as the same
+or request policy label, not an authenticated principal. In modern MCP,
+OpenMoat resolves the label from each request's `clientInfo`; the
+`OPENMOAT_CALLER` environment variable remains a trusted local-launcher
+override. Neither mechanism authenticates another process running as the same
 operating-system user.
+
+The outward stdio server accepts MCP 2025-11-25 and MCP 2026-07-28 clients.
+Downstream connections negotiate either generation automatically. OpenMoat
+forwards complete tool-result envelopes, including `structuredContent` and
+safe `_meta` fields, after recursive secret redaction and removal of
+connection-hop protocol metadata.
 
 OpenMoat is useful when several local models or coding harnesses need the same
 MCP capabilities without each one spawning its own copy of every server. The
@@ -62,7 +71,8 @@ untrusted local executable safe.
 
 `context_save` provides small local handoffs without sending them to a hosted
 memory service. Agent-authored notes are size/count bounded, control-character
-sanitized, labeled as untrusted data, and isolated by launcher caller identity.
+sanitized, labeled as untrusted data, and isolated by the resolved caller
+policy label.
 They are continuity notes, not a substitute for a model context window or a
 trusted knowledge base. Promote reviewed durable facts into human-owned
 profile files.
@@ -76,8 +86,9 @@ copies secrets, databases, OAuth tokens, archives, or other runtime state.
 
 ## Status
 
-OpenMoat TypeScript 0.3 is supported. The sibling Rust, Go, and Python
+OpenMoat TypeScript 0.4 is supported. The sibling Rust, Go, and Python
 repositories are experimental gateway-only comparisons and do not implement
-the shared-brain modules.
+the shared-brain modules. Their MCP 2026-07-28 compatibility is not claimed
+until they independently pass the finalized conformance contract.
 
 MIT licensed; original attribution is preserved in [LICENSE](LICENSE).

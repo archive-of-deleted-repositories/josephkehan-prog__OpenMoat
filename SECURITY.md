@@ -17,10 +17,20 @@ tool results, errors, health, and catalog diagnostics. Agent MCP calls cannot
 perform trust, enablement, synchronization, configuration application, or
 shared-index administration.
 
-Agent-authored context writes are isolated by launcher caller identity, bounded
-by per-caller count and byte quotas, stored mode 0600, and labeled as untrusted
-data on read. A caller cannot retrieve another caller's notes through
-`context_latest` or context-backed RAG results.
+Agent-authored context writes are isolated by the resolved caller policy label,
+bounded by per-caller count and byte quotas, stored mode 0600, and labeled as
+untrusted data on read. Modern request `clientInfo`, legacy connection
+`clientInfo`, and the trusted local-launcher `OPENMOAT_CALLER` override are
+labels for local policy selection, not authenticated principals. Missing or
+malformed labels resolve to `unknown`, which is denied by default. A caller
+cannot retrieve another caller label's notes through `context_latest` or
+context-backed RAG results, but same-user processes are not cryptographically
+isolated by these labels.
+
+Complete downstream tool-result envelopes are recursively redacted before
+proxying. OpenMoat removes downstream client/server identity and protocol
+version metadata at the connection hop; those fields cannot establish caller
+authority on the outward connection.
 
 Never place secrets directly in `Moatfile`. Use `${NAME}` and provide the value
 through the environment or a mode-0600 ignored `secrets.env`.

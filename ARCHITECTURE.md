@@ -23,7 +23,21 @@ wire contract for that external runtime is deliberately not frozen in 0.2; it
 must first be derived from cross-language conformance evidence.
 
 The MCP TypeScript v2 client, server, and core packages are pinned at 2.0.0.
-Protocol package differences are not exposed in OpenMoat JSON contracts.
+The reference stdio server uses the SDK's dual-era serving path for
+MCP 2025-11-25 initialization and MCP 2026-07-28 discovery. Downstream clients
+negotiate the protocol generation automatically. Process pools remain an
+implementation optimization for startup cost, concurrency, working-directory
+isolation, and cleanup; they do not supply protocol-session correctness.
+
+Caller context is resolved at the tool-request boundary. Modern requests use
+their per-request `clientInfo`; legacy requests use the initialized connection
+label. A trusted launcher can pin the label with `OPENMOAT_CALLER`. These are
+transport policy labels, not authenticated principals.
+
+Gateway tool results retain the complete MCP envelope. Recursive redaction
+applies before forwarding, and downstream protocol-hop metadata such as client
+and server identity/version fields is removed so it cannot become upstream
+authority.
 
 `vendor/spec` is produced by `scripts/update-spec.sh /path/to/OpenMoat-Spec`,
 verified against the signed tag and exact commit in `spec.lock`, and never
