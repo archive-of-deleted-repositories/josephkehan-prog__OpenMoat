@@ -53,8 +53,29 @@
             "additionalProperties": false,
             "properties": {
               "allow": {"type": "array", "items": {"type": "string", "minLength": 1}},
-              "deny": {"type": "array", "items": {"type": "string", "minLength": 1}}
+              "deny": {"type": "array", "items": {"type": "string", "minLength": 1}},
+              "zone": {"type": "string", "minLength": 1, "default": "default"}
             }
+          }
+        },
+        "zones": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "allowMixedRisk": {"type": "boolean", "default": false}
+            }
+          },
+          "default": {}
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxPools": {"type": "integer", "minimum": 1, "default": 32},
+            "maxPoolsPerServer": {"type": "integer", "minimum": 1, "default": 8},
+            "idleTimeoutMs": {"type": "integer", "minimum": 1, "default": 300000}
           }
         },
         "servers": {
@@ -67,7 +88,33 @@
               "command": {"type": "string", "minLength": 1},
               "args": {"type": "array", "items": {"type": "string"}},
               "env": {"type": "object", "additionalProperties": {"type": "string"}},
+              "inheritEnv": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+                "uniqueItems": true
+              },
               "cwd": {"type": "string", "minLength": 1},
+              "cwdRoots": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "uniqueItems": true
+              },
+              "capabilities": {
+                "type": "array",
+                "items": {
+                  "enum": [
+                    "public-read",
+                    "sensitive-read",
+                    "filesystem-write",
+                    "network-egress",
+                    "process-control",
+                    "secrets",
+                    "memory-write"
+                  ]
+                },
+                "uniqueItems": true
+              },
+              "zone": {"type": "string", "minLength": 1, "default": "default"},
               "trust": {"enum": ["trusted", "quarantined", "disabled"]},
               "startupTimeoutMs": {"type": "integer", "minimum": 1},
               "callTimeoutMs": {"type": "integer", "minimum": 1},

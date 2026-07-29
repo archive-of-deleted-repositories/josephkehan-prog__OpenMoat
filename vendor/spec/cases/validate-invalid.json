@@ -1,1 +1,1 @@
-{"version":1,"id":"validate-invalid","operation":"validate","input":{"fixture":"fixtures/invalid/unknown-version.yaml"},"expected":{"ok":false,"error":{"code":"INVALID_CONFIG"}}}
+{"version":1,"id":"validate-invalid","driver":"cli","operation":"validate","input":{"fixture":"fixtures/invalid/unknown-version.yaml"},"expected":{"ok":false,"error":{"code":"INVALID_CONFIG"}}}

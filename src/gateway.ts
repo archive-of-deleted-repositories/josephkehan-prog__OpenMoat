@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { Client } from "@modelcontextprotocol/client";
@@ -13,253 +12,408 @@ import { getHealth } from "./health.js";
 import { makeTransport } from "./mcp-client.js";
 import { FileOAuthProvider } from "./oauth.js";
 import { requireGatewayAuthorization } from "./policy.js";
+import {
+  resolveWorkingDirectory,
+  sanitizeMetadata,
+  SecretRedactor,
+  withDeadline,
+} from "./runtime-security.js";
 import { isToolNotFoundError, suggestToolName } from "./tool-policy.js";
 import {
   loadSecretsCached,
   resolveServers,
+  type ResolvedServer,
   type ServerDef,
 } from "./registry.js";
 import { HUB_VERSION } from "./version.js";
 
-/**
- * The reverse direction: agents connect to ONE server (the hub); the RAG
- * holds the whole MCP universe; the gateway lazily loads any registry server
- * on demand and proxies tool calls through. A server doesn't need to be
- * synced into any harness config — being in the registry is enough.
- *
- * Flow for an agent: tool_search("what I need") -> tool_describe(server, tool)
- * -> tool_call(server, tool, args). Connections are pooled per hub process.
- */
+interface PoolEntry {
+  client: Client;
+  serverId: string;
+  cwd?: string;
+  pid?: number;
+  lastUsed: number;
+  redactor: SecretRedactor;
+  callTimeoutMs: number;
+  failureThreshold: number;
+  resetAfterMs: number;
+  maxConcurrentCalls: number;
+}
 
-const pool = new Map<string, { client: Client; pid?: number }>();
-/** Spawns in progress, keyed like the pool. Set synchronously before any await
- *  so two concurrent calls to the same cold server share one spawn instead of
- *  racing past the pool check and leaking an untracked child. */
-const inflight = new Map<string, Promise<Client>>();
+interface RuntimeTarget {
+  asset: FederatedAsset<ServerDef>;
+  server: ResolvedServer;
+  poolKey: string;
+  cwd?: string;
+  redactor: SecretRedactor;
+}
+
+const pool = new Map<string, PoolEntry>();
+const inflight = new Map<string, Promise<PoolEntry>>();
+const reservations = new Map<string, string>();
+const activeCalls = new Map<string, number>();
 
 /** All descendant pids of `pid` (children, grandchildren, …), breadth-first. */
 function descendants(pid: number): number[] {
   const out: number[] = [];
   const stack = [pid];
   while (stack.length) {
-    const p = stack.pop()!;
-    let kids: number[] = [];
+    const parent = stack.pop()!;
+    let children: number[] = [];
     try {
-      kids = execFileSync("pgrep", ["-P", String(p)], { timeout: 1000 })
+      children = execFileSync("pgrep", ["-P", String(parent)], { timeout: 1000 })
         .toString()
         .trim()
         .split(/\s+/)
         .filter(Boolean)
         .map(Number);
     } catch {
-      /* no children */
+      // No children.
     }
-    for (const k of kids) {
-      out.push(k);
-      stack.push(k);
+    for (const child of children) {
+      out.push(child);
+      stack.push(child);
     }
   }
   return out;
 }
 
+function killEntry(entry: PoolEntry): number[] {
+  const killed: number[] = [];
+  if (entry.pid === undefined) return killed;
+  for (const pid of [...descendants(entry.pid), entry.pid].reverse()) {
+    try {
+      process.kill(pid, "SIGKILL");
+      killed.push(pid);
+    } catch {
+      // Already gone.
+    }
+  }
+  return killed;
+}
+
+function evict(poolKey: string, close = true): number[] {
+  const entry = pool.get(poolKey);
+  pool.delete(poolKey);
+  reservations.delete(poolKey);
+  activeCalls.delete(poolKey);
+  if (!entry) return [];
+  const killed = killEntry(entry);
+  if (close) {
+    void entry.client.close().catch(() => {
+      // The process may already have exited.
+    });
+  }
+  return killed;
+}
+
 /**
- * Synchronously kill every pooled child (and its descendants). Used on
- * shutdown — no awaits, no timers, nothing that can hang. npx/npm-exec
- * wrappers don't forward SIGTERM to the real server, so the whole tree is
- * killed deepest-first. Returns what was reaped for logging.
+ * Synchronously kill every pooled child and all descendants. The CLI calls
+ * this on EOF and termination signals, so no asynchronous cleanup is relied on.
  */
 export function reapAll(): { server: string; pids: number[] }[] {
   const entries = [...pool.entries()];
+  const reaped = entries.map(([key, entry]) => ({
+    server: entry.serverId,
+    pids: evict(key, false),
+  }));
   pool.clear();
-  const reaped: { server: string; pids: number[] }[] = [];
-  for (const [server, e] of entries) {
-    const pids: number[] = [];
-    if (e.pid) {
-      // kill the whole tree, deepest first (npx wrappers nest: shell -> npm -> node)
-      const tree = [...descendants(e.pid), e.pid].reverse();
-      for (const p of tree) {
-        try {
-          process.kill(p, "SIGKILL");
-          pids.push(p);
-        } catch {
-          /* already gone */
-        }
-      }
-    }
-    reaped.push({ server, pids });
-  }
+  inflight.clear();
+  reservations.clear();
+  activeCalls.clear();
   return reaped;
 }
 
-async function getClient(cfg: HubConfig, serverName: string, cwd?: string): Promise<Client> {
+function reservePool(cfg: HubConfig, serverId: string, poolKey: string): void {
+  if (reservations.has(poolKey)) return;
+  const perServer = [...reservations.values()].filter(
+    (value) => value === serverId
+  ).length;
+  if (perServer >= cfg.gatewayLimits.maxPoolsPerServer) {
+    throw new Error(
+      `POOL_LIMIT: '${serverId}' reached ${cfg.gatewayLimits.maxPoolsPerServer} pools`
+    );
+  }
+  if (reservations.size >= cfg.gatewayLimits.maxPools) {
+    throw new Error(
+      `POOL_LIMIT: gateway reached ${cfg.gatewayLimits.maxPools} pools`
+    );
+  }
+  reservations.set(poolKey, serverId);
+}
+
+function reapIdle(cfg: HubConfig): void {
+  const now = Date.now();
+  for (const [key, entry] of pool) {
+    if (now - entry.lastUsed >= cfg.gatewayLimits.idleTimeoutMs) evict(key);
+  }
+}
+
+function resolveTarget(
+  cfg: HubConfig,
+  serverName: string,
+  requestedCwd?: string
+): RuntimeTarget {
   const asset = resolveFederatedServer(cfg, serverName);
   if (!asset) {
-    throw new Error(`'${serverName}' is not in the federated MCP catalog. Use registry_list.`);
+    throw new Error(
+      `'${serverName}' is not in the federated MCP catalog. Use registry_list.`
+    );
   }
-  const poolKey = cwd ? `${asset.id}@${cwd}` : asset.id;
-  const existing = pool.get(poolKey);
-  if (existing) {
-    // A pooled entry whose child has died must not be handed out — it fails
-    // every call with "Not connected" until evicted. Signal 0 probes liveness.
-    let alive = true;
-    if (existing.pid !== undefined) {
-      try {
-        process.kill(existing.pid, 0);
-      } catch {
-        alive = false;
-      }
-    }
-    if (alive) return existing.client;
-    pool.delete(poolKey);
-    try {
-      void existing.client.close();
-    } catch {
-      /* already dead */
-    }
+  if (asset.value.trusted === false) {
+    throw new Error(
+      `QUARANTINED: '${serverName}' requires approval from the human-only 'moat trust' command`
+    );
   }
-  const pending = inflight.get(poolKey);
-  if (pending) return pending;
-  const spawning = spawnClient(cfg, asset, serverName, cwd, poolKey).finally(() =>
-    inflight.delete(poolKey)
+  if (asset.value.disabled) {
+    throw new Error(`QUARANTINED: '${serverName}' is disabled`);
+  }
+
+  const secrets = loadSecretsCached(cfg.secretsEnv);
+  const { servers, warnings } = resolveServers(
+    [{ ...asset.value, name: asset.id, disabled: false }],
+    secrets
   );
-  inflight.set(poolKey, spawning);
+  if (warnings.length) {
+    throw new Error(`UNRESOLVED_SECRET: ${warnings.join("; ")}`);
+  }
+  const server = servers[0];
+  const redactor = new SecretRedactor([
+    ...Object.values(secrets),
+    ...Object.values(server.env ?? {}),
+    ...Object.values(server.headers ?? {}),
+  ]);
+  const cwd =
+    server.transport === "http"
+      ? undefined
+      : resolveWorkingDirectory(
+          requestedCwd,
+          server.cwd,
+          server.cwdRoots ?? [],
+          path.dirname(cfg.configFile)
+        );
+  return {
+    asset,
+    server,
+    cwd,
+    poolKey: cwd ? `${asset.id}@${cwd}` : asset.id,
+    redactor,
+  };
+}
+
+function entryAlive(entry: PoolEntry): boolean {
+  if (entry.pid === undefined) return true;
+  try {
+    process.kill(entry.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function getEntry(
+  cfg: HubConfig,
+  serverName: string,
+  requestedCwd?: string
+): Promise<PoolEntry> {
+  reapIdle(cfg);
+  const target = resolveTarget(cfg, serverName, requestedCwd);
+  const existing = pool.get(target.poolKey);
+  if (existing && entryAlive(existing)) {
+    existing.lastUsed = Date.now();
+    return existing;
+  }
+  if (existing) evict(target.poolKey);
+  const pending = inflight.get(target.poolKey);
+  if (pending) return pending;
+
+  reservePool(cfg, target.asset.id, target.poolKey);
+  const spawning = spawnClient(cfg, target, serverName)
+    .catch((error) => {
+      reservations.delete(target.poolKey);
+      throw error;
+    })
+    .finally(() => inflight.delete(target.poolKey));
+  inflight.set(target.poolKey, spawning);
   return spawning;
 }
 
-/**
- * Eagerly spawn a set of frequently-used servers so the first real tool_call
- * is warm (npx/uvx cold start + package resolution is otherwise paid on the
- * first call per server). Fire-and-forget: failures are logged, never thrown —
- * a bad prewarm target must not block hub boot. Already-pooled servers no-op.
- */
+/** Prewarm is best-effort and never exposes secret-bearing errors. */
 export function prewarm(cfg: HubConfig, servers: string[]): void {
   for (const name of servers) {
-    getClient(cfg, name).catch((e) => console.error(`openmoat: prewarm '${name}' failed: ${e}`));
+    getEntry(cfg, name).catch(() =>
+      console.error(`openmoat: prewarm '${name}' failed`)
+    );
   }
 }
 
-// `command -v` results never change under a running process — check once.
 const binAvailable = new Map<string, boolean>();
 
-/** Absolute-resolve a spawn directory, rejecting files and missing paths with
- *  a message that names which setting supplied it. */
-function requireDirectory(dir: string, label: string): string {
-  const resolved = path.resolve(dir);
-  let stat;
-  try {
-    stat = fs.statSync(resolved);
-  } catch {
-    throw new Error(`${label} does not exist`);
+async function connectHttp(
+  cfg: HubConfig,
+  target: RuntimeTarget,
+  client: Client,
+  serverName: string
+): Promise<Client> {
+  const server = target.server;
+  if (server.headers) {
+    const transport = makeTransport(server);
+    await withDeadline(
+      client.connect(transport),
+      server.startupTimeoutMs ?? 10_000,
+      () => transport.close()
+    );
+    return client;
   }
-  if (!stat.isDirectory()) throw new Error(`${label} is not a directory`);
-  return resolved;
+
+  const provider = new FileOAuthProvider(cfg.stateDir, server.name, true);
+  let transport = makeTransport(server, {
+    authProvider: provider,
+  }) as StreamableHTTPClientTransport;
+  try {
+    await withDeadline(
+      client.connect(transport),
+      server.startupTimeoutMs ?? 10_000,
+      () => transport.close()
+    );
+    return client;
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      const code = await provider.waitForCode();
+      await transport.finishAuth(code);
+      provider.closeCallbackServer();
+      client = new Client({
+        name: "openmoat-gateway",
+        version: HUB_VERSION,
+      });
+      transport = makeTransport(server, {
+        authProvider: provider,
+      }) as StreamableHTTPClientTransport;
+      await withDeadline(
+        client.connect(transport),
+        server.startupTimeoutMs ?? 10_000,
+        () => transport.close()
+      );
+      return client;
+    }
+    if (String(error).includes("dynamic client registration")) {
+      throw new Error(
+        `PROCESS_FAILED: '${serverName}' requires an explicitly configured token header`
+      );
+    }
+    throw error;
+  }
 }
 
 async function spawnClient(
   cfg: HubConfig,
-  asset: FederatedAsset<ServerDef>,
-  serverName: string,
-  cwd: string | undefined,
-  poolKey: string
-): Promise<Client> {
-  const def = asset.value;
-  if (def.trusted === false) {
-    throw new Error(
-      `'${serverName}' is QUARANTINED (newly adopted, not yet approved — tool-poisoning defense). A human must approve it: \`hub trust ${serverName}\` or the registry_trust tool.`
-    );
-  }
+  target: RuntimeTarget,
+  serverName: string
+): Promise<PoolEntry> {
+  const { server, poolKey, redactor } = target;
 
-  // A caller-supplied `cwd` becomes the spawned server's working directory.
-  // Require it to be an existing directory (absolute-resolved) so a tool call
-  // can't point a server at a bogus or surprising path; reject files and
-  // non-existent paths early with a clear error.
-  if (cwd !== undefined) cwd = requireDirectory(cwd, `cwd '${cwd}'`);
-
-  // Preflight: fail fast with the fix when a local prerequisite is missing.
-  for (const r of def.requires ?? []) {
-    let ok = binAvailable.get(r.bin);
-    if (ok === undefined) {
+  for (const requirement of server.requires ?? []) {
+    let available = binAvailable.get(requirement.bin);
+    if (available === undefined) {
       try {
-        // No shell interpolation: `r.bin` is passed as a positional arg ($1)
-        // to `command -v`, so a registry entry with shell metacharacters in
-        // `requires[].bin` cannot inject a command (defense in depth — this
-        // path already sits behind the trust gate above).
-        execFileSync("/bin/sh", ["-c", 'command -v "$1"', "sh", r.bin], { stdio: "ignore" });
-        ok = true;
+        execFileSync(
+          "/bin/sh",
+          ["-c", 'command -v "$1"', "sh", requirement.bin],
+          { stdio: "ignore" }
+        );
+        available = true;
       } catch {
-        ok = false;
+        available = false;
       }
-      binAvailable.set(r.bin, ok);
+      binAvailable.set(requirement.bin, available);
     }
-    if (!ok) throw new Error(`'${serverName}' needs '${r.bin}' installed first${r.hint ? ` — ${r.hint}` : ""}. Not spawned.`);
+    if (!available) {
+      throw new Error(
+        `PROCESS_FAILED: '${serverName}' needs '${requirement.bin}' installed first`
+      );
+    }
   }
 
   const health = getHealth(cfg);
-  const breaker = health.check("server", serverName);
+  const breaker = health.check("server", poolKey, {
+    failureThreshold: server.limits?.failureThreshold,
+    resetAfterMs: server.limits?.resetAfterMs,
+  });
   if (breaker.open) {
     throw new Error(
-      `'${serverName}' is cooling down after repeated failures (retry in ~${Math.ceil(breaker.retryInMs / 60_000)}m). Last error: ${breaker.reason}`
+      `CIRCUIT_OPEN: '${serverName}' is cooling down; last error: ${redactor.text(breaker.reason)}`
     );
   }
 
-  const { servers } = resolveServers(
-    [{ ...def, name: asset.id, disabled: false }],
-    loadSecretsCached(cfg.secretsEnv)
-  );
-  const s = servers[0];
-
-  // No cwd from the call? Use the one the registry entry pins. It is read from
-  // the RESOLVED server so `~` and ${VAR} are already expanded — the raw def
-  // still holds the literal string. Servers that derive per-project state from
-  // `process.cwd()` otherwise spawn in the hub's own directory and look up a
-  // project that does not exist.
-  if (cwd === undefined && s.cwd !== undefined) {
-    cwd = requireDirectory(s.cwd, `'${serverName}' registry cwd '${s.cwd}'`);
-  }
-
-  let client = new Client({ name: "openmoat-gateway", version: HUB_VERSION });
+  let client = new Client({
+    name: "openmoat-gateway",
+    version: HUB_VERSION,
+  });
+  let pid: number | undefined;
   try {
-    if (s.transport === "http") {
-      if (s.headers) {
-        // Static bearer/header auth (for endpoints without dynamic client
-        // registration, e.g. GitHub — token from secrets.env).
-        await client.connect(makeTransport(s));
-      } else {
-        // Hub-side OAuth: browser opens once on first use, tokens cached in state/oauth/.
-        const provider = new FileOAuthProvider(cfg.stateDir, s.name, true);
-        let transport = makeTransport(s, { authProvider: provider }) as StreamableHTTPClientTransport;
-        try {
-          await client.connect(transport);
-        } catch (e) {
-          if (e instanceof UnauthorizedError) {
-            const code = await provider.waitForCode();
-            await transport.finishAuth(code);
-            provider.closeCallbackServer();
-            client = new Client({ name: "openmoat-gateway", version: HUB_VERSION });
-            transport = makeTransport(s, { authProvider: provider }) as StreamableHTTPClientTransport;
-            await client.connect(transport);
-          } else if (String(e).includes("dynamic client registration")) {
-            throw new Error(
-              `'${serverName}' requires OAuth but doesn't support dynamic client registration. Add a token header in the registry instead, e.g. "headers": {"Authorization": "Bearer \${${serverName.toUpperCase()}_TOKEN}"} with the token in secrets.env.`
-            );
-          } else {
-            throw e;
-          }
-        }
-      }
-      pool.set(poolKey, { client });
+    if (server.transport === "http") {
+      client = await connectHttp(cfg, target, client, serverName);
     } else {
-      const transport = makeTransport(s, { cwd });
-      await client.connect(transport);
-      const pid = "pid" in transport && typeof transport.pid === "number" ? transport.pid : undefined;
-      pool.set(poolKey, { client, pid });
+      const transport = makeTransport(server, { cwd: target.cwd });
+      await withDeadline(
+        client.connect(transport),
+        server.startupTimeoutMs ?? 10_000,
+        () => transport.close()
+      );
+      pid =
+        "pid" in transport && typeof transport.pid === "number"
+          ? transport.pid
+          : undefined;
     }
-  } catch (e) {
-    health.failure("server", serverName, String(e));
-    throw e;
+  } catch (error) {
+    const message = redactor.text(String(error));
+    health.failure("server", poolKey, message);
+    try {
+      await client.close();
+    } catch {
+      // The client may never have connected.
+    }
+    if (message.includes("TIMEOUT")) throw new Error(message);
+    throw new Error(`PROCESS_FAILED: ${message}`);
   }
-  health.success("server", serverName);
-  return client;
+
+  health.success("server", poolKey);
+  const entry: PoolEntry = {
+    client,
+    serverId: target.asset.id,
+    cwd: target.cwd,
+    pid,
+    lastUsed: Date.now(),
+    redactor,
+    callTimeoutMs: server.callTimeoutMs ?? 30_000,
+    failureThreshold: server.limits?.failureThreshold ?? 4,
+    resetAfterMs: server.limits?.resetAfterMs ?? 5 * 60_000,
+    maxConcurrentCalls: server.limits?.maxConcurrentCalls ?? 4,
+  };
+  pool.set(poolKey, entry);
+  return entry;
+}
+
+function authorize(
+  cfg: HubConfig,
+  serverName: string,
+  toolName: string,
+  agent?: string
+): FederatedAsset<ServerDef> {
+  const asset = resolveFederatedServer(cfg, serverName);
+  if (!asset) {
+    throw new Error(
+      `'${serverName}' is not in the federated MCP catalog. Use registry_list.`
+    );
+  }
+  requireGatewayAuthorization(
+    cfg,
+    agent,
+    serverName,
+    toolName,
+    asset.value.zone ?? "default"
+  );
+  return asset;
 }
 
 export async function gatewayDescribe(
@@ -268,13 +422,33 @@ export async function gatewayDescribe(
   toolName?: string,
   agent?: string
 ): Promise<string> {
-  requireGatewayAuthorization(cfg, agent, serverName, toolName ?? "*");
-  const client = await getClient(cfg, serverName);
-  const { tools } = await client.listTools();
-  const picked = toolName ? tools.filter((t) => t.name === toolName) : tools;
-  if (!picked.length) return `No tool '${toolName}' on '${serverName}'. Available: ${tools.map((t) => t.name).join(", ")}`;
+  const asset = authorize(cfg, serverName, toolName ?? "*", agent);
+  const entry = await getEntry(cfg, serverName);
+  const result = await withDeadline(
+    entry.client.listTools(),
+    entry.callTimeoutMs,
+    async () => {
+      evict(entry.cwd ? `${asset.id}@${entry.cwd}` : asset.id);
+    }
+  );
+  const picked = toolName
+    ? result.tools.filter((tool) => tool.name === toolName)
+    : result.tools;
+  if (!picked.length) {
+    return `No tool '${toolName}' on '${serverName}'. Available: ${result.tools
+      .map((tool) => tool.name)
+      .join(", ")}`;
+  }
   return picked
-    .map((t) => `## ${serverName} › ${t.name}\n${t.description ?? ""}\nInput schema: ${JSON.stringify(t.inputSchema)}`)
+    .map((tool) =>
+      sanitizeMetadata(
+        `Tool: ${tool.name}\n${tool.description ?? ""}\nInput schema: ${JSON.stringify(tool.inputSchema)}`,
+        {
+          server: serverName,
+          trust: asset.value.trusted === false ? "quarantined" : "trusted",
+        }
+      )
+    )
     .join("\n\n");
 }
 
@@ -292,80 +466,131 @@ export async function gatewayCall(
   agent?: string
 ): Promise<GatewayResult> {
   const health = getHealth(cfg);
-  const toolKey = `${serverName}›${toolName}`;
+  let asset: FederatedAsset<ServerDef>;
   try {
-    requireGatewayAuthorization(cfg, agent, serverName, toolName);
-  } catch (e) {
+    asset = authorize(cfg, serverName, toolName, agent);
+  } catch (error) {
     try {
-      health.recordAgentCall(agent ?? "unknown", serverName, toolName, 0, true);
-    } catch (he) {
-      console.error(`openmoat: health accounting failed for denied ${toolKey}: ${he}`);
+      health.recordAgentCall(
+        agent ?? "unknown",
+        serverName,
+        toolName,
+        0,
+        true
+      );
+    } catch {
+      // Accounting cannot change the authorization result.
     }
-    throw e;
+    throw error;
   }
-  const lockout = health.check("tool", toolKey);
-  if (lockout.open) {
+
+  const entry = await getEntry(cfg, serverName, cwd);
+  const poolKey = entry.cwd ? `${asset.id}@${entry.cwd}` : asset.id;
+  const toolKey = `${poolKey}›${toolName}`;
+  const breaker = health.check("tool", toolKey, {
+    failureThreshold: entry.failureThreshold,
+    resetAfterMs: entry.resetAfterMs,
+  });
+  if (breaker.open) {
     throw new Error(
-      `'${toolKey}' is locked out after repeated errors (retry in ~${Math.ceil(lockout.retryInMs / 60_000)}m). Last error: ${lockout.reason}`
+      `CIRCUIT_OPEN: '${serverName}›${toolName}' is locked out; last error: ${entry.redactor.text(breaker.reason)}`
     );
   }
 
-  const client = await getClient(cfg, serverName, cwd);
-  const t0 = Date.now();
+  const concurrent = activeCalls.get(poolKey) ?? 0;
+  if (concurrent >= entry.maxConcurrentCalls) {
+    throw new Error(
+      `POOL_LIMIT: '${serverName}' reached ${entry.maxConcurrentCalls} concurrent calls`
+    );
+  }
+  activeCalls.set(poolKey, concurrent + 1);
+  const started = Date.now();
   try {
-    const res = await client.callTool({ name: toolName, arguments: args });
-    const isError = res.isError === true;
-    // Pass content through verbatim (text, images, embedded resources — all of it).
-    const content = (res.content as unknown[] | undefined) ?? [];
-    const firstText = (content[0] as { text?: string } | undefined)?.text ?? "";
-    // Health accounting must never turn a successful upstream call into an
-    // error for the agent (or evict a healthy connection).
-    try {
-      health.recordCall(serverName, toolName, Date.now() - t0, isError);
-      health.recordAgentCall(agent ?? "unknown", serverName, toolName, Date.now() - t0, isError);
-      if (isError) health.failure("tool", toolKey, firstText.slice(0, 150));
-      else health.success("tool", toolKey);
-    } catch (e) {
-      console.error(`openmoat: health accounting failed for ${toolKey}: ${e}`);
+    const result = await withDeadline(
+      entry.client.callTool({ name: toolName, arguments: args }),
+      entry.callTimeoutMs,
+      async () => {
+        evict(poolKey);
+      }
+    );
+    const isError = result.isError === true;
+    let content = entry.redactor.redact(
+      (result.content as unknown[] | undefined) ?? []
+    );
+    if (isError) {
+      content = content.map((block) => {
+        if (
+          block !== null &&
+          typeof block === "object" &&
+          (block as { type?: unknown }).type === "text"
+        ) {
+          const value = block as { text?: unknown };
+          return {
+            ...block,
+            text: `PROCESS_FAILED: ${String(value.text ?? "")}`,
+          };
+        }
+        return block;
+      });
     }
+    const firstText =
+      (content[0] as { text?: string } | undefined)?.text ?? "";
+    health.recordCall(
+      serverName,
+      toolName,
+      Date.now() - started,
+      isError
+    );
+    health.recordAgentCall(
+      agent ?? "unknown",
+      serverName,
+      toolName,
+      Date.now() - started,
+      isError
+    );
+    if (isError) health.failure("tool", toolKey, firstText);
+    else health.success("tool", toolKey);
+    entry.lastUsed = Date.now();
     return {
-      content: content.length ? content : [{ type: "text", text: "(empty result)" }],
+      content: content.length
+        ? content
+        : [{ type: "text", text: "(empty result)" }],
       isError,
     };
-  } catch (e) {
+  } catch (error) {
+    const message = entry.redactor.text(String(error));
     try {
-      health.recordCall(serverName, toolName, Date.now() - t0, true);
-      health.recordAgentCall(agent ?? "unknown", serverName, toolName, Date.now() - t0, true);
-      health.failure("tool", toolKey, String(e));
-    } catch (he) {
-      console.error(`openmoat: health accounting failed for ${toolKey}: ${he}`);
-    }
-    // Drop the broken connection so the next call respawns the server. The
-    // pool is keyed by the FEDERATED asset id (e.g. "local/lsp-go"), not the
-    // caller's short server name — deleting by serverName was a silent no-op
-    // that left dead clients pooled forever ("Not connected" on every call).
-    const assetForEvict = resolveFederatedServer(cfg, serverName);
-    const evictId = assetForEvict ? assetForEvict.id : serverName;
-    pool.delete(cwd ? `${evictId}@${cwd}` : evictId);
-    pool.delete(cwd ? `${serverName}@${cwd}` : serverName); // legacy key, belt-and-braces
-    try {
-      await client.close();
+      health.recordCall(
+        serverName,
+        toolName,
+        Date.now() - started,
+        true
+      );
+      health.recordAgentCall(
+        agent ?? "unknown",
+        serverName,
+        toolName,
+        Date.now() - started,
+        true
+      );
+      health.failure("tool", toolKey, message);
     } catch {
-      /* ignore */
+      // Accounting cannot replace the gateway error.
     }
-    // "Tool X not found" is unrecoverable as the downstream server phrases it —
-    // the agent gets no way to correct, so it retries the same wrong name. On
-    // 2026-07-21, 39% of all recorded gateway calls were exactly this loop
-    // (dbx›query x20, squish›x x20). Name the near-miss instead.
-    const msg = String(e);
-    if (isToolNotFoundError(msg)) {
-      throw new Error(await notFoundHelp(client, serverName, toolName, msg));
+    evict(poolKey);
+    if (isToolNotFoundError(message)) {
+      throw new Error(
+        await notFoundHelp(entry.client, serverName, toolName, message)
+      );
     }
-    throw e;
+    throw new Error(message);
+  } finally {
+    const remaining = (activeCalls.get(poolKey) ?? 1) - 1;
+    if (remaining > 0) activeCalls.set(poolKey, remaining);
+    else activeCalls.delete(poolKey);
   }
 }
 
-/** Rewrite a bare "tool not found" into something the agent can act on. */
 async function notFoundHelp(
   client: Client,
   serverName: string,
@@ -374,14 +599,17 @@ async function notFoundHelp(
 ): Promise<string> {
   let names: string[] = [];
   try {
-    names = ((await client.listTools()).tools ?? []).map((t) => t.name);
+    names = ((await client.listTools()).tools ?? []).map((tool) => tool.name);
   } catch {
-    return `${original}\n\n'${toolName}' is not a tool on '${serverName}', and the tool list could not be read. Run tool_search to find the right one.`;
+    return `${original}\n\n'${toolName}' is not a tool on '${serverName}', and the tool list could not be read. Run tool_search.`;
   }
   const near = suggestToolName(toolName, names);
-  const head = `No tool '${toolName}' on '${serverName}'.`;
   if (near.length) {
-    return `${head} Did you mean: ${near.map((n) => `${serverName}›${n}`).join(", ")}? Do NOT retry '${toolName}' — it does not exist.`;
+    return `No tool '${toolName}' on '${serverName}'. Did you mean: ${near
+      .map((name) => `${serverName}›${name}`)
+      .join(", ")}?`;
   }
-  return `${head} Do NOT retry it. Available on '${serverName}': ${names.join(", ") || "(none)"}. Or run tool_search to find the right server.`;
+  return `No tool '${toolName}' on '${serverName}'. Available: ${
+    names.join(", ") || "(none)"
+  }.`;
 }

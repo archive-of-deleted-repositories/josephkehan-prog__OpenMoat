@@ -2,12 +2,14 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { ResolvedServer } from "./registry.js";
+import { buildChildEnv } from "./runtime-security.js";
 
-export function cleanEnv(extra?: Record<string, string>): Record<string, string> {
-  const base = Object.fromEntries(
-    Object.entries(process.env).filter(([, v]) => v !== undefined)
-  ) as Record<string, string>;
-  return { ...base, ...(extra ?? {}) };
+export function cleanEnv(
+  extra?: Record<string, string>,
+  inheritEnv?: string[],
+  source: Readonly<Record<string, string | undefined>> = process.env
+): Record<string, string> {
+  return buildChildEnv(extra, inheritEnv, source);
 }
 
 /** Build a client transport for any registry server (stdio or streamable-http). */
@@ -26,7 +28,7 @@ export function makeTransport(
   return new StdioClientTransport({
     command: s.command,
     args: s.args ?? [],
-    env: cleanEnv(s.env),
+    env: cleanEnv(s.env, s.inheritEnv),
     cwd: opts.cwd,
     stderr: "ignore",
   });

@@ -10,6 +10,12 @@
       "type": "object",
       "additionalProperties": {"$ref": "#/$defs/caller"}
     },
+    "zones": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/zone"},
+      "default": {}
+    },
+    "limits": {"$ref": "#/$defs/gatewayLimits"},
     "servers": {
       "type": "object",
       "additionalProperties": {"$ref": "#/$defs/server"}
@@ -27,7 +33,24 @@
       "additionalProperties": false,
       "properties": {
         "allow": {"$ref": "#/$defs/patternList"},
-        "deny": {"$ref": "#/$defs/patternList"}
+        "deny": {"$ref": "#/$defs/patternList"},
+        "zone": {"type": "string", "minLength": 1, "default": "default"}
+      }
+    },
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowMixedRisk": {"type": "boolean", "default": false}
+      }
+    },
+    "gatewayLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxPools": {"type": "integer", "minimum": 1, "default": 32},
+        "maxPoolsPerServer": {"type": "integer", "minimum": 1, "default": 8},
+        "idleTimeoutMs": {"type": "integer", "minimum": 1, "default": 300000}
       }
     },
     "limits": {
@@ -51,7 +74,36 @@
           "additionalProperties": {"type": "string"},
           "default": {}
         },
+        "inheritEnv": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+          "uniqueItems": true,
+          "default": []
+        },
         "cwd": {"type": "string", "minLength": 1},
+        "cwdRoots": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true,
+          "default": []
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "public-read",
+              "sensitive-read",
+              "filesystem-write",
+              "network-egress",
+              "process-control",
+              "secrets",
+              "memory-write"
+            ]
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "zone": {"type": "string", "minLength": 1, "default": "default"},
         "trust": {
           "type": "string",
           "enum": ["trusted", "quarantined", "disabled"],

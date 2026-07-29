@@ -1,1 +1,1 @@
-{"version":1,"id":"env-resolution","operation":"resolve_env","input":{"value":"prefix-${OPENMOAT_FIXTURE_TOKEN}","environment":{"OPENMOAT_FIXTURE_TOKEN":"secret-value"}},"expected":{"ok":true,"value":"prefix-secret-value"},"redact":["secret-value"]}
+{"version":1,"id":"env-resolution","driver":"contract","operation":"resolve_env","input":{"value":"prefix-${OPENMOAT_FIXTURE_TOKEN}","environment":{"OPENMOAT_FIXTURE_TOKEN":"secret-value"}},"expected":{"ok":true,"value":"prefix-secret-value"},"redact":["secret-value"]}

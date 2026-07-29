@@ -73,11 +73,22 @@ export interface TargetConfig {
 export interface GatewayPolicyRule {
   allow?: string[];
   deny?: string[];
+  zone?: string;
 }
 
 export interface GatewayPolicy {
   default: "allow" | "deny";
   agents: Record<string, GatewayPolicyRule>;
+}
+
+export interface GatewayZone {
+  allowMixedRisk: boolean;
+}
+
+export interface GatewayRuntimeLimits {
+  maxPools: number;
+  maxPoolsPerServer: number;
+  idleTimeoutMs: number;
 }
 
 export interface PluginStoreConfig {
@@ -123,15 +134,20 @@ export interface HubConfig {
   targets: Record<string, TargetConfig>;
   prewarm?: string[];
   gatewayPolicy: GatewayPolicy;
+  gatewayZones: Record<string, GatewayZone>;
+  gatewayLimits: GatewayRuntimeLimits;
   federation?: FederationConfig;
-  autoApproveTrust?: boolean;
 }
 
 interface GatewayServerDocument {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  inheritEnv?: string[];
   cwd?: string;
+  cwdRoots?: string[];
+  capabilities?: ServerDef["capabilities"];
+  zone?: string;
   trust?: "trusted" | "quarantined" | "disabled";
   startupTimeoutMs?: number;
   callTimeoutMs?: number;
@@ -150,6 +166,8 @@ interface MoatfileDocument {
   targets?: Record<string, TargetConfig>;
   gateway?: {
     callers?: Record<string, GatewayPolicyRule>;
+    zones?: Record<string, { allowMixedRisk?: boolean }>;
+    limits?: Partial<GatewayRuntimeLimits>;
     servers?: Record<string, GatewayServerDocument>;
   };
   profile?: Record<string, unknown>;
@@ -160,7 +178,6 @@ interface MoatfileDocument {
   };
   federation?: FederationConfig;
   prewarm?: string[];
-  autoApproveTrust?: boolean;
 }
 
 let validateMoatfile: ValidateFunction | undefined;
@@ -198,7 +215,8 @@ function normalizeTargets(
 }
 
 function normalizeInlineServers(
-  servers: Record<string, GatewayServerDocument>
+  servers: Record<string, GatewayServerDocument>,
+  base: string
 ): ServerDef[] {
   return Object.entries(servers).map(([name, server]) => ({
     name,
@@ -206,7 +224,11 @@ function normalizeInlineServers(
     command: server.command,
     args: server.args ?? [],
     env: server.env ?? {},
-    cwd: server.cwd,
+    inheritEnv: server.inheritEnv ?? [],
+    cwd: server.cwd ? absoluteFrom(base, server.cwd) : undefined,
+    cwdRoots: (server.cwdRoots ?? []).map((root) => absoluteFrom(base, root)),
+    capabilities: server.capabilities ?? [],
+    zone: server.zone ?? "default",
     trusted: server.trust === "trusted",
     disabled: server.trust === "disabled",
     gatewayOnly: true,
@@ -214,6 +236,40 @@ function normalizeInlineServers(
     callTimeoutMs: server.callTimeoutMs,
     limits: server.limits,
   }));
+}
+
+function validateGatewaySemantics(document: MoatfileDocument): void {
+  const gateway = document.gateway;
+  if (!gateway) return;
+  const zones = gateway.zones ?? {};
+  const capabilities = new Map<string, Set<string>>();
+  for (const server of Object.values(gateway.servers ?? {})) {
+    if (server.trust === "disabled") continue;
+    const zone = server.zone ?? "default";
+    if (zone !== "default" && zones[zone] === undefined) {
+      throw new Error(`invalid Moatfile: gateway server references unknown zone '${zone}'`);
+    }
+    const values = capabilities.get(zone) ?? new Set<string>();
+    for (const capability of server.capabilities ?? []) values.add(capability);
+    capabilities.set(zone, values);
+  }
+  for (const [caller, rule] of Object.entries(gateway.callers ?? {})) {
+    const zone = rule.zone ?? "default";
+    if (zone !== "default" && zones[zone] === undefined) {
+      throw new Error(`invalid Moatfile: caller '${caller}' references unknown zone '${zone}'`);
+    }
+  }
+  for (const [zone, values] of capabilities) {
+    if (
+      values.has("sensitive-read") &&
+      values.has("network-egress") &&
+      zones[zone]?.allowMixedRisk !== true
+    ) {
+      throw new Error(
+        `invalid Moatfile: mixed-risk zone '${zone}' combines sensitive-read and network-egress`
+      );
+    }
+  }
 }
 
 function normalizeMoatfile(document: MoatfileDocument, file: string): HubConfig {
@@ -234,7 +290,7 @@ function normalizeMoatfile(document: MoatfileDocument, file: string): HubConfig 
     features: { ...FEATURE_DEFAULTS, ...(document.features ?? {}) },
     configFile: file,
     registry: path.join(base, "registry", "mcp-servers.json"),
-    inlineServers: normalizeInlineServers(document.gateway?.servers ?? {}),
+    inlineServers: normalizeInlineServers(document.gateway?.servers ?? {}, base),
     secretsEnv: path.join(base, "secrets.env"),
     stateDir,
     skillsDir: path.join(base, "skills"),
@@ -260,12 +316,22 @@ function normalizeMoatfile(document: MoatfileDocument, file: string): HubConfig 
       default: "deny",
       agents: document.gateway?.callers ?? {},
     },
+    gatewayZones: Object.fromEntries(
+      Object.entries(document.gateway?.zones ?? {}).map(([name, zone]) => [
+        name,
+        { allowMixedRisk: zone.allowMixedRisk === true },
+      ])
+    ),
+    gatewayLimits: {
+      maxPools: document.gateway?.limits?.maxPools ?? 32,
+      maxPoolsPerServer: document.gateway?.limits?.maxPoolsPerServer ?? 8,
+      idleTimeoutMs: document.gateway?.limits?.idleTimeoutMs ?? 300_000,
+    },
     federation: document.federation ?? {
       includeLocal: true,
       conflictPolicy: "error",
       sources: [],
     },
-    autoApproveTrust: document.autoApproveTrust ?? false,
   };
 }
 
@@ -287,6 +353,12 @@ function normalizeLegacy(raw: HubConfig, file: string): HubConfig {
     contextDir: absolute(raw.contextDir),
     targets: normalizeTargets(raw.targets, base),
     gatewayPolicy: raw.gatewayPolicy ?? { default: "deny", agents: {} },
+    gatewayZones: raw.gatewayZones ?? {},
+    gatewayLimits: raw.gatewayLimits ?? {
+      maxPools: 32,
+      maxPoolsPerServer: 8,
+      idleTimeoutMs: 300_000,
+    },
     rag: {
       ...raw.rag,
       db: absolute(raw.rag.db),
@@ -327,6 +399,7 @@ export function loadConfigFile(input: string): HubConfig {
       .join("; ");
     throw new Error(`invalid Moatfile: ${details}`);
   }
+  validateGatewaySemantics(document as MoatfileDocument);
   const normalized = normalizeMoatfile(document as MoatfileDocument, file);
   normalized.rag.include.push(
     path.join(normalized.stateDir, "mcp-tools"),

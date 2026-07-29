@@ -22,13 +22,31 @@ function decideRule(rule: GatewayPolicyRule | undefined, server: string, tool: s
   return undefined;
 }
 
-export function authorizeGateway(cfg: HubConfig, agentName: string | undefined, server: string, tool = "*"): GatewayDecision {
+export function authorizeGateway(
+  cfg: HubConfig,
+  agentName: string | undefined,
+  server: string,
+  tool = "*",
+  serverZone = "default"
+): GatewayDecision {
   const agent = agentName?.trim() || "unknown";
   const target = `${server}:${tool}`;
   const policy = cfg.gatewayPolicy;
   if (!policy) return { allowed: true, agent, target, reason: "no gateway policy configured" };
 
-  const agentDecision = decideRule(policy.agents[agent], server, tool);
+  const agentRule = policy.agents[agent];
+  const wildcardRule = policy.agents["*"];
+  const callerZone = agentRule?.zone ?? wildcardRule?.zone ?? "default";
+  if (callerZone !== serverZone) {
+    return {
+      allowed: false,
+      agent,
+      target,
+      reason: `zone denied: caller '${callerZone}' cannot access server zone '${serverZone}'`,
+    };
+  }
+
+  const agentDecision = decideRule(agentRule, server, tool);
   if (agentDecision !== undefined) {
     return {
       allowed: agentDecision,
@@ -38,7 +56,7 @@ export function authorizeGateway(cfg: HubConfig, agentName: string | undefined, 
     };
   }
 
-  const wildcardDecision = decideRule(policy.agents["*"], server, tool);
+  const wildcardDecision = decideRule(wildcardRule, server, tool);
   if (wildcardDecision !== undefined) {
     return {
       allowed: wildcardDecision,
@@ -56,9 +74,10 @@ export function requireGatewayAuthorization(
   cfg: HubConfig,
   agentName: string | undefined,
   server: string,
-  tool = "*"
+  tool = "*",
+  serverZone = "default"
 ): GatewayDecision {
-  const decision = authorizeGateway(cfg, agentName, server, tool);
+  const decision = authorizeGateway(cfg, agentName, server, tool, serverZone);
   if (!decision.allowed) {
     throw new Error(`gateway policy denied '${decision.agent}' access to '${decision.target}' (${decision.reason})`);
   }

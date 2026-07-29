@@ -4,7 +4,6 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { getArchive } from "./archive.js";
-import { writeFileSafe } from "./backup.js";
 import { compressText } from "./compress.js";
 import type { HubConfig } from "./config.js";
 import {
@@ -12,14 +11,14 @@ import {
   federatedServers,
   federatedSkills,
   getFederationSnapshot,
-  invalidateFederationCache,
   renderFederatedPlugins,
   renderFederation,
   resolveFederatedServer,
   resolveFederatedSkill,
 } from "./federation.js";
-import { gatewayCall, gatewayDescribe, prewarm, reapAll } from "./gateway.js";
+import { createGatewayRuntime } from "./gateway-runtime.js";
 import { getHealth } from "./health.js";
+import { authorizeGateway } from "./policy.js";
 import { applyToolPolicy, loadToolPolicy } from "./tool-policy.js";
 import {
   hasRecentSelfReport,
@@ -29,9 +28,8 @@ import {
   sanitizeObservation,
   truncateAtWord,
 } from "./instincts.js";
-import { catalogDirs, refreshMcpCatalog } from "./mcp-rag.js";
+import { catalogDirs } from "./mcp-rag.js";
 import { Rag } from "./rag.js";
-import { runSync } from "./sync.js";
 import { HUB_VERSION } from "./version.js";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
@@ -77,6 +75,7 @@ function latestContextFiles(contextDir: string, n: number): string[] {
 export async function serve(cfg: HubConfig): Promise<void> {
   const server = new McpServer({ name: "openmoat", version: HUB_VERSION });
   const rag = new Rag(cfg);
+  const gatewayRuntime = createGatewayRuntime(cfg);
 
   // Who is calling: OPENMOAT_CALLER override, else the MCP clientInfo sent by the
   // harness during initialize. Lazy — clientInfo only exists after the
@@ -129,18 +128,6 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     }
   );
 
-  server.registerTool(
-    "rag_reindex",
-    { description: "Force a full re-index of the RAG corpus. Returns stats.", inputSchema: {} },
-    async () => {
-      const r = await rag.index(true);
-      const s = rag.stats();
-      return text(
-        `reindexed ${r.indexed} files (embeddings: ${r.embedded ? "on" : "off — FTS only"}). corpus: ${s.files} files, ${s.chunks} chunks, ${s.withEmbeddings} embedded.`
-      );
-    }
-  );
-
   // Cross-encoder re-rank for tool_search candidates. Qwen3-Reranker is a
   // co-resident lane on the local llama-swap (:1235), so a call never evicts
   // the warm base model. 1.5s budget — ranking must never hang tool_search.
@@ -179,7 +166,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     "tool_search",
     {
       description:
-        "Find the right MCP tool across ALL servers in the shared registry by describing what you need (e.g. 'store a long-term memory', 'search case law'). Searches the indexed tool catalogs semantically. Run mcp_reindex first if catalogs are stale.",
+        "Find the right MCP tool across all authorized servers by describing what you need. Searches the human-refreshed tool catalog; use the human-only `moat mcp refresh` command if it is stale.",
       inputSchema: { query: z.string(), k: z.number().int().min(1).max(15).optional() },
     },
     async ({ query, k }) => {
@@ -191,7 +178,26 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       // top1 0.1607 -> 0.4429 vs the old ftsOnly path. Falls back to hybrid
       // order on any reranker failure, and to FTS-only if embeddings are down.
       const want = k ?? 5;
-      let hits = await rag.search(query, 20, { pathPrefix: toolsDir });
+      let hits = await rag.search(query, 50, { pathPrefix: toolsDir });
+      // Search is discovery, but discovery still observes the same caller,
+      // trust, and zone boundaries as describe/call. Otherwise a denied server
+      // can poison or disclose its catalog metadata before a call is refused.
+      hits = hits.filter((hit) => {
+        const [serverName = "", toolName = "*"] = hit.heading
+          .split("›", 2)
+          .map((value) => value.trim());
+        const asset = resolveFederatedServer(cfg, serverName);
+        if (!asset || asset.value.disabled || asset.value.trusted === false) {
+          return false;
+        }
+        return authorizeGateway(
+          cfg,
+          agentName(),
+          serverName,
+          toolName,
+          asset.value.zone ?? "default"
+        ).allowed;
+      });
       hits = await rerankWithCrossEncoder(query, hits, want);
       // demote results from servers whose breaker is open
       const flaky = getHealth(cfg).openServers();
@@ -200,7 +206,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
         hits = [...hits.filter((h) => !isFlaky(h)), ...hits.filter(isFlaky)];
       }
       logUsage(cfg, { tool: "tool_search", agent: agentName(), query, topScore: hits[0]?.score ?? 0 });
-      if (!hits.length) return text("No tool matches. Run mcp_reindex to refresh the catalogs.");
+      if (!hits.length) return text("No tool matches. Ask a human to run `moat mcp refresh` if the catalog is stale.");
       // Collision handling: duplicate tool names (fetch, search, click, query,
       // list_issues…) score near-identically under FTS, so without this the
       // agent picks arbitrarily. Demotes registry-dispreferred duplicates and
@@ -218,20 +224,6 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
   );
 
   server.registerTool(
-    "mcp_reindex",
-    {
-      description:
-        "Refresh the MCP-derived RAG corpus: connects to every registry server (read-only), re-catalogs their tools, ingests their resources, and re-indexes. Use when servers were added or their toolsets changed.",
-      inputSchema: {},
-    },
-    async () => {
-      const notes = await refreshMcpCatalog(cfg);
-      const r = await rag.index();
-      return text([...notes, `re-indexed ${r.indexed} file(s)`].join("\n"));
-    }
-  );
-
-  server.registerTool(
     "tool_describe",
     {
       description:
@@ -241,7 +233,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     async ({ server: srv, tool }) => {
       const agent = agentName();
       try {
-        const result = await gatewayDescribe(cfg, srv, tool, agent);
+        const result = await gatewayRuntime.describe(srv, tool, agent);
         logUsage(cfg, { tool: "tool_describe", agent, server: srv, target: tool });
         return text(result);
       } catch (e) {
@@ -268,7 +260,13 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       const agent = agentName();
       let r;
       try {
-        r = await gatewayCall(cfg, srv, tool, (args ?? {}) as Record<string, unknown>, cwd, agent);
+        r = await gatewayRuntime.call(
+          srv,
+          tool,
+          (args ?? {}) as Record<string, unknown>,
+          cwd,
+          agent
+        );
       } catch (e) {
         logUsage(cfg, {
           tool: "tool_call",
@@ -453,62 +451,6 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
   );
 
   server.registerTool(
-    "registry_trust",
-    {
-      description:
-        "Approve a QUARANTINED registry server (newly adopted servers can't be called through the gateway until a human approves them — tool-poisoning defense). Gated: unless the hub is configured with autoApproveTrust, this tool refuses and the human must run `hub trust <name>` themselves.",
-      inputSchema: { name: z.string() },
-    },
-    async ({ name }) => {
-      if (!cfg.autoApproveTrust) {
-        return text(
-          `refused: agents cannot approve quarantined servers (autoApproveTrust is off). Ask the human to run \`hub trust ${name}\` in a terminal — approval must come from outside the agent loop.`
-        );
-      }
-      const { trust } = await import("./adopt.js");
-      return text(trust(cfg, name));
-    }
-  );
-
-  server.registerTool(
-    "registry_enable",
-    {
-      description:
-        "Permanently enable a disabled registry server and sync it into every harness config (use when a tool should be natively available rather than gateway-proxied). Requires harness restart to take effect.",
-      inputSchema: { name: z.string() },
-    },
-    async ({ name }) => {
-      const federated = resolveFederatedServer(cfg, name);
-      if (federated && federated.source !== "local") {
-        return text(
-          `'${name}' comes from read-only federation source '${federated.source}'. Enable or trust it in that source, or copy it into the local registry first.`
-        );
-      }
-      const localName = federated?.name ?? name;
-      const raw = JSON.parse(fs.readFileSync(cfg.registry, "utf8")) as {
-        servers: { name: string; disabled?: boolean; gatewayOnly?: boolean; trusted?: boolean }[];
-      };
-      const entry = raw.servers.find((s) => s.name === localName);
-      if (!entry) return text(`'${name}' not in local registry.`);
-      if (entry.trusted === false) {
-        return text(`'${name}' is QUARANTINED — a human must approve it first (\`hub trust ${name}\`).`);
-      }
-      entry.disabled = false;
-      writeFileSafe(cfg.registry, JSON.stringify(raw, null, 2) + "\n", cfg.stateDir, false);
-      invalidateFederationCache(cfg);
-      if (entry.gatewayOnly) {
-        // serversFor() never syncs gatewayOnly servers into harness configs —
-        // don't claim otherwise.
-        return text(
-          `enabled '${name}' for gateway routing (tool_search → tool_call). It is marked gatewayOnly, so it was NOT written into any harness config; set "gatewayOnly": false in the registry and run hub sync to make it native.`
-        );
-      }
-      const report = runSync(cfg, {});
-      return text([`enabled '${name}' and synced:`, ...report.lines].join("\n"));
-    }
-  );
-
-  server.registerTool(
     "context_save",
     {
       description:
@@ -633,7 +575,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
 
   // Pre-warm hot servers so the first real tool_call is warm (not paying
   // npx/uvx cold-start). Fire-and-forget; opt-in via cfg.prewarm.
-  if (cfg.prewarm?.length) prewarm(cfg, cfg.prewarm);
+  if (cfg.prewarm?.length) gatewayRuntime.prewarm(cfg.prewarm);
 
   // Shutdown must reap pooled gateway children (npx wrappers orphan their
   // real server processes) and then exit. Triggered by: MCP transport close,
@@ -642,7 +584,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
-    const reaped = reapAll();
+    const reaped = gatewayRuntime.close();
     console.error(`openmoat: shutdown, reaped ${reaped.map((r) => `${r.server}:[${r.pids.join(",")}]`).join(" ") || "nothing"}`);
     process.exit(0);
   };

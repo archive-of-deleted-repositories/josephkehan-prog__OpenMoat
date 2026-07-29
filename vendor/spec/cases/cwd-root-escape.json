@@ -1,0 +1,1 @@
+{"version":1,"id":"cwd-root-escape","driver":"mcp","operation":"cwd_root_escape","input":{"server":{"mode":"normal"},"tool":"current_working_directory","arguments":{}},"expected":{"ok":false,"error":{"code":"PATH_OUTSIDE_ROOT"}}}

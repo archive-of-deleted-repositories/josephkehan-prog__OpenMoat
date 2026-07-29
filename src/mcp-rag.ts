@@ -9,6 +9,7 @@ import {
 import { makeTransport } from "./mcp-client.js";
 import { FileOAuthProvider } from "./oauth.js";
 import { loadSecrets, resolveServers, type ResolvedServer } from "./registry.js";
+import { sanitizeMetadata, SecretRedactor } from "./runtime-security.js";
 import { HUB_VERSION } from "./version.js";
 
 /**
@@ -54,8 +55,14 @@ export async function refreshMcpCatalog(cfg: HubConfig): Promise<string[]> {
     ...asset.value,
     name: asset.selected ? asset.name : asset.id,
   }));
-  const { servers } = resolveServers(definitions, loadSecrets(cfg.secretsEnv));
+  const secrets = loadSecrets(cfg.secretsEnv);
+  const { servers } = resolveServers(definitions, secrets);
   const { toolsDir, ingestDir } = catalogDirs(cfg);
+  // The catalog is derived state. Rebuild it from only the currently enabled
+  // and trusted definitions so stale entries cannot preserve access to a
+  // server that a human later disabled or quarantined.
+  fs.rmSync(toolsDir, { recursive: true, force: true });
+  fs.rmSync(ingestDir, { recursive: true, force: true });
   fs.mkdirSync(toolsDir, { recursive: true });
   fs.mkdirSync(ingestDir, { recursive: true });
 
@@ -67,15 +74,32 @@ export async function refreshMcpCatalog(cfg: HubConfig): Promise<string[]> {
   const worker = async () => {
     while (next < servers.length) {
       const i = next++;
-      perServer[i] = await catalogOne(cfg, servers[i], toolsDir, ingestDir);
+      perServer[i] = await catalogOne(
+        cfg,
+        servers[i],
+        toolsDir,
+        ingestDir,
+        Object.values(secrets)
+      );
     }
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, servers.length) }, worker));
   return perServer.flat();
 }
 
-async function catalogOne(cfg: HubConfig, s: ResolvedServer, toolsDir: string, ingestDir: string): Promise<string[]> {
+async function catalogOne(
+  cfg: HubConfig,
+  s: ResolvedServer,
+  toolsDir: string,
+  ingestDir: string,
+  secretValues: string[]
+): Promise<string[]> {
   const notes: string[] = [];
+  const redactor = new SecretRedactor([
+    ...secretValues,
+    ...Object.values(s.env ?? {}),
+    ...Object.values(s.headers ?? {}),
+  ]);
   {
     if (s.name === "openmoat") return notes; // don't spawn ourselves
     if (s.trusted === false) {
@@ -93,12 +117,21 @@ async function catalogOne(cfg: HubConfig, s: ResolvedServer, toolsDir: string, i
       const tools = await withTimeout(client.listTools(), `listTools ${s.name}`);
       const lines: string[] = [`# MCP tool catalog — ${s.name}`, ""];
       for (const t of tools.tools) {
-        const props = (t.inputSchema as { properties?: Record<string, unknown> })?.properties ?? {};
+        const props =
+          (t.inputSchema as { properties?: Record<string, unknown> })
+            ?.properties ?? {};
+        const metadata = sanitizeMetadata(
+          `${t.description ?? ""}${
+            Object.keys(props).length
+              ? `\nParameters: ${Object.keys(props).join(", ")}`
+              : ""
+          }`,
+          { server: s.name, trust: "trusted" }
+        );
         lines.push(
           `### ${s.name} › ${t.name}`,
           "",
-          (t.description ?? "").trim(),
-          Object.keys(props).length ? `Parameters: ${Object.keys(props).join(", ")}` : "",
+          metadata,
           ""
         );
       }
@@ -120,9 +153,14 @@ async function catalogOne(cfg: HubConfig, s: ResolvedServer, toolsDir: string, i
             const dir = path.join(ingestDir, s.name);
             fs.mkdirSync(dir, { recursive: true });
             const slug = (r.name ?? r.uri).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "resource";
+            const body = sanitizeMetadata(
+              text,
+              { server: s.name, trust: "trusted" },
+              100_000
+            );
             fs.writeFileSync(
               path.join(dir, `${slug}.md`),
-              `# ${r.name ?? r.uri}\n\nSource: ${r.uri} (server: ${s.name})\n\n${text.slice(0, 100000)}\n`,
+              `# ${r.name ?? r.uri}\n\nSource: ${r.uri} (server: ${s.name})\n\n${body}\n`,
               "utf8"
             );
             saved++;
@@ -135,7 +173,9 @@ async function catalogOne(cfg: HubConfig, s: ResolvedServer, toolsDir: string, i
         notes.push(`${s.name}: no resources capability`);
       }
     } catch (e) {
-      notes.push(`${s.name}: FAILED — ${String(e).slice(0, 140)}`);
+      notes.push(
+        `${s.name}: FAILED — ${redactor.text(String(e)).slice(0, 140)}`
+      );
     } finally {
       try {
         await client.close();

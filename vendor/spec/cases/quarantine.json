@@ -1,1 +1,1 @@
-{"version":1,"id":"quarantine","operation":"authorize","input":{"caller":"codex","server":"remote","tool":"read","trust":"quarantined","policy":{"allow":["remote:*"],"deny":[]}},"expected":{"ok":true,"allowed":false,"reason":"quarantined"}}
+{"version":1,"id":"quarantine","driver":"contract","operation":"authorize","input":{"caller":"codex","server":"remote","tool":"read","trust":"quarantined","policy":{"allow":["remote:*"],"deny":[]}},"expected":{"ok":true,"allowed":false,"reason":"quarantined"}}

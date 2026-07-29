@@ -7,15 +7,15 @@ export interface ServerDef {
   command?: string;
   args?: string[];
   env?: Record<string, string>;
+  inheritEnv?: string[];
   url?: string;
   headers?: Record<string, string>;
   targets?: string[];
   disabled?: boolean;
   /** Reachable via the hub gateway (tool_call) but never synced into harness configs. */
   gatewayOnly?: boolean;
-  /** Quarantine (mcpproxy-style tool-poisoning defense): false = newly adopted,
-   *  not callable through the gateway until approved via `hub trust <name>` or
-   *  the registry_trust tool. Undefined/true = trusted. */
+  /** Quarantine: false = not callable until a human runs `moat trust <name>`.
+   *  Undefined/true = trusted. */
   trusted?: boolean;
   /** Local prerequisites checked before spawn; fail fast with the hint. */
   requires?: { bin: string; hint?: string }[];
@@ -24,6 +24,17 @@ export interface ServerDef {
    *  without it they run in the hub's own directory and look up a project that
    *  does not exist. A caller-supplied cwd still wins. */
   cwd?: string;
+  cwdRoots?: string[];
+  capabilities?: (
+    | "public-read"
+    | "sensitive-read"
+    | "filesystem-write"
+    | "network-egress"
+    | "process-control"
+    | "secrets"
+    | "memory-write"
+  )[];
+  zone?: string;
   startupTimeoutMs?: number;
   callTimeoutMs?: number;
   limits?: {

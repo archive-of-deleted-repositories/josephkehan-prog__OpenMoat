@@ -1,1 +1,1 @@
-{"version":1,"id":"process-failure","operation":"process_failure","input":{"exitCode":17},"expected":{"ok":false,"error":{"code":"PROCESS_FAILED"}}}
+{"version":1,"id":"process-failure","driver":"mcp","operation":"process_failure","input":{"server":{"mode":"crash-startup","startupTimeoutMs":250},"tool":"echo","arguments":{"value":"never"}},"expected":{"ok":false,"error":{"code":"PROCESS_FAILED"}}}

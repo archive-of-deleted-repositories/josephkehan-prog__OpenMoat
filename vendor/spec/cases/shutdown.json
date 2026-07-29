@@ -1,1 +1,1 @@
-{"version":1,"id":"shutdown","operation":"shutdown","input":{"children":[101,102]},"expected":{"ok":true,"childrenRemaining":0}}
+{"version":1,"id":"shutdown","driver":"mcp","operation":"shutdown","input":{"server":{"mode":"spawn-descendant"},"tool":"echo","arguments":{"value":"ready"}},"expected":{"ok":true,"childrenRemaining":0}}

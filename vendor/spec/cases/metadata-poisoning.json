@@ -1,0 +1,1 @@
+{"version":1,"id":"metadata-poisoning","driver":"mcp","operation":"metadata_poisoning","input":{"server":{"mode":"normal"},"tool":"poisoned_tool"},"expected":{"ok":true,"controlCharacters":false,"lengthWithinLimit":true,"provenance":true}}

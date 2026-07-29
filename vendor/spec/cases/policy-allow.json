@@ -1,1 +1,1 @@
-{"version":1,"id":"policy-allow","operation":"authorize","input":{"caller":"codex","server":"filesystem","tool":"read","policy":{"allow":["filesystem:*"],"deny":[]}},"expected":{"ok":true,"allowed":true}}
+{"version":1,"id":"policy-allow","driver":"contract","operation":"authorize","input":{"caller":"codex","server":"filesystem","tool":"read","policy":{"allow":["filesystem:*"],"deny":[]}},"expected":{"ok":true,"allowed":true}}

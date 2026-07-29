@@ -1,1 +1,1 @@
-{"version":1,"id":"timeout","operation":"timeout","input":{"timeoutMs":10},"expected":{"ok":false,"error":{"code":"TIMEOUT"},"circuit":"open"}}
+{"version":1,"id":"timeout","driver":"mcp","operation":"timeout","input":{"server":{"mode":"normal","callTimeoutMs":25,"limits":{"failureThreshold":1,"resetAfterMs":60000,"maxConcurrentCalls":1}},"tool":"sleep","arguments":{"milliseconds":250}},"expected":{"ok":false,"error":{"code":"TIMEOUT"},"circuit":"open"}}

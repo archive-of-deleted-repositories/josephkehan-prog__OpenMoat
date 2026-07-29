@@ -1,7 +1,7 @@
 # OpenMoat
 
 OpenMoat is a local-first MCP gateway and shared agent configuration
-reconciler. TypeScript 0.1 is the supported complete implementation.
+reconciler. TypeScript 0.2 is the supported complete implementation.
 
 It extracts the reusable engineering from a private multi-agent setup without
 shipping workstation identity, live configuration, secrets, registries,
@@ -9,8 +9,9 @@ runtime state, or logs.
 
 ## What it includes
 
-- Lazy, pooled MCP gateway with lexical discovery, policy, quarantine, health,
-  timeouts, OAuth support, and child cleanup.
+- Lazy, bounded MCP gateway with policy, quarantine, capability zones,
+  realpath-contained working directories, secret redaction, timeouts, health,
+  OAuth support, and complete child cleanup.
 - Reconciliation adapters for common coding-agent harnesses.
 - Shared profile and handoff support enabled by default.
 - Opt-in RAG, embeddings, skills, plugins, and instincts.
@@ -34,7 +35,7 @@ global installation is required.
 Configuration precedence is `--file`, then `OPENMOAT_FILE`, then
 `${XDG_CONFIG_HOME:-~/.config}/openmoat/Moatfile`. The canonical file is
 extensionless YAML with `apiVersion: openmoat.dev/v1`. Project overlays are not
-supported in 0.1.
+supported in 0.2.
 
 All harness targets begin disabled. Review `moat detect`, then explicitly
 enable and apply only the targets you want.
@@ -46,14 +47,26 @@ their `trust` is explicitly `trusted`. `${ENV}` values remain placeholders in
 configuration and are resolved only at runtime. Diagnostics must never print
 resolved values.
 
+Agent-facing MCP tools cannot approve trust, enable servers, apply
+configuration, synchronize harnesses, or rebuild shared indexes. Those
+operations remain human-only CLI commands. MCP `clientInfo` is a launcher
+policy label, not authentication against another process running as the same
+operating-system user.
+
+OpenMoat is useful when several local models or coding harnesses need the same
+MCP capabilities without each one spawning its own copy of every server. The
+gateway keeps tool metadata out of the model context until search/describe is
+needed, lazily starts approved servers, reuses warm connections, and applies
+one local policy boundary. It saves model context; it does not make an
+untrusted local executable safe.
+
 `moat migrate-config old.json Moatfile` copies configuration only. It never
 copies secrets, databases, OAuth tokens, archives, or other runtime state.
 
 ## Status
 
-OpenMoat TypeScript 0.1 is supported. The sibling Rust, Go, and Python
+OpenMoat TypeScript 0.2 is supported. The sibling Rust, Go, and Python
 repositories are experimental gateway-only comparisons and do not implement
 the shared-brain modules.
 
 MIT licensed; original attribution is preserved in [LICENSE](LICENSE).
-

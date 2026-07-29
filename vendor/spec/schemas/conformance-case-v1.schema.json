@@ -4,14 +4,17 @@
   "title": "OpenMoat Conformance Case v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "id", "operation", "input", "expected"],
+  "required": ["version", "id", "driver", "operation", "input", "expected"],
   "properties": {
     "version": {"const": 1},
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "driver": {"enum": ["cli", "contract", "mcp"]},
     "operation": {
       "enum": [
         "validate", "resolve_path", "resolve_env", "authorize",
-        "process_failure", "timeout", "shutdown", "doctor"
+        "caller_binding", "cwd_root_escape", "environment_isolation",
+        "metadata_poisoning", "pool_limit", "process_failure",
+        "secret_redaction", "shutdown", "timeout", "doctor"
       ]
     },
     "input": {"type": "object"},

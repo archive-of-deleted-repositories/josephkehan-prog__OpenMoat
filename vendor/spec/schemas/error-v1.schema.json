@@ -11,7 +11,9 @@
       "enum": [
         "INVALID_CONFIG", "UNRESOLVED_ENV", "UNAUTHORIZED", "QUARANTINED",
         "SERVER_NOT_FOUND", "TOOL_NOT_FOUND", "PROCESS_FAILED", "TIMEOUT",
-        "CIRCUIT_OPEN", "PROTOCOL_ERROR", "INTERNAL"
+        "CIRCUIT_OPEN", "PATH_OUTSIDE_ROOT", "POOL_LIMIT", "ZONE_DENIED",
+        "RATE_LIMITED", "METADATA_REJECTED", "SECRET_LEAK",
+        "PROTOCOL_ERROR", "INTERNAL"
       ]
     },
     "message": {"type": "string", "minLength": 1},

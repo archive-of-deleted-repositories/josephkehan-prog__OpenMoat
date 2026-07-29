@@ -20,6 +20,11 @@ export interface BreakerState {
   reason: string;
 }
 
+export interface BreakerPolicy {
+  failureThreshold?: number;
+  resetAfterMs?: number;
+}
+
 export class Health {
   private db: DatabaseSync;
 
@@ -58,14 +63,20 @@ export class Health {
     this.db.prepare("DELETE FROM breakers WHERE scope = ? AND key = ?").run(scope, key);
   }
 
-  check(scope: "server" | "tool", key: string): BreakerState {
+  check(
+    scope: "server" | "tool",
+    key: string,
+    policy: BreakerPolicy = {}
+  ): BreakerState {
     const row = this.db
       .prepare("SELECT failures, last_at, last_error FROM breakers WHERE scope = ? AND key = ?")
       .get(scope, key) as unknown as { failures: number; last_at: number; last_error: string } | undefined;
-    if (!row || row.failures < THRESHOLD[scope]) return { open: false, retryInMs: 0, reason: "" };
+    const threshold = policy.failureThreshold ?? THRESHOLD[scope];
+    const cooldown = policy.resetAfterMs ?? COOLDOWN_MS[scope];
+    if (!row || row.failures < threshold) return { open: false, retryInMs: 0, reason: "" };
     const elapsed = Date.now() - row.last_at;
-    if (elapsed >= COOLDOWN_MS[scope]) return { open: false, retryInMs: 0, reason: row.last_error }; // half-open probe
-    return { open: true, retryInMs: COOLDOWN_MS[scope] - elapsed, reason: row.last_error };
+    if (elapsed >= cooldown) return { open: false, retryInMs: 0, reason: row.last_error }; // half-open probe
+    return { open: true, retryInMs: cooldown - elapsed, reason: row.last_error };
   }
 
   /** Servers whose breaker is currently open (for tool_search demotion). */

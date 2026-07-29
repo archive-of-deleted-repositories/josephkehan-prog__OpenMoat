@@ -1,1 +1,1 @@
-{"version":1,"id":"policy-deny-precedence","operation":"authorize","input":{"caller":"codex","server":"filesystem","tool":"delete","policy":{"allow":["filesystem:*"],"deny":["filesystem:delete"]}},"expected":{"ok":true,"allowed":false,"reason":"denied"}}
+{"version":1,"id":"policy-deny-precedence","driver":"contract","operation":"authorize","input":{"caller":"codex","server":"filesystem","tool":"delete","policy":{"allow":["filesystem:*"],"deny":["filesystem:delete"]}},"expected":{"ok":true,"allowed":false,"reason":"denied"}}
