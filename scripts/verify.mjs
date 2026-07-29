@@ -27,6 +27,7 @@ run("python3", [
   "--file",
   "vendor/spec/fixtures/official/Moatfile",
 ]);
+run("./scripts/run-shared-conformance.sh", []);
 
 const tracked = spawnSync("git", ["ls-files", "-z"], { encoding: "utf8" })
   .stdout.split("\0")
