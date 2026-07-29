@@ -27,7 +27,7 @@
     "test": "tsc && node --test test/*.test.mjs",
     "test:coverage": "npm run test:coverage:core && npm run test:coverage:gateway",
     "test:coverage:core": "node --test --experimental-test-coverage --test-coverage-include=dist/config.js --test-coverage-include=dist/context-store.js --test-coverage-include=dist/reconcile.js --test-coverage-include=dist/integrations.js --test-coverage-include=dist/policy.js --test-coverage-include=dist/registry.js --test-coverage-include=dist/runtime-security.js --test-coverage-include=dist/tool-catalog.js --test-coverage-lines=80 --test-coverage-functions=80 --test-coverage-branches=80 test/*.test.mjs",
-    "test:coverage:gateway": "node --test --experimental-test-coverage --test-coverage-include=dist/gateway.js --test-coverage-include=dist/server.js --test-coverage-lines=50 --test-coverage-functions=50 --test-coverage-branches=25 test/*.test.mjs",
+    "test:coverage:gateway": "c8 --all --include=dist/archive.js --include=dist/config.js --include=dist/context-store.js --include=dist/db.js --include=dist/gateway-runtime.js --include=dist/gateway.js --include=dist/init.js --include=dist/instincts.js --include=dist/integrations.js --include=dist/policy.js --include=dist/process-tree.js --include=dist/reconcile.js --include=dist/registry.js --include=dist/runtime-security.js --include=dist/server.js --include=dist/tool-catalog.js --include=dist/tool-surface.js --reporter=text --check-coverage --lines=80 --functions=80 --branches=80 node scripts/coverage-suite.mjs",
     "typecheck": "tsc --noEmit",
     "verify": "node scripts/verify.mjs",
     "sync": "node dist/cli.js sync",
@@ -46,6 +46,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "c8": "12.0.0",
     "typescript": "^5.7.2"
   }
 }

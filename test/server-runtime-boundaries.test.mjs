@@ -44,6 +44,18 @@ test("oversized envelopes return a minimal caller-bound archive marker", () => {
   assert.equal(bounded.result.isError, undefined);
   assert.equal("resultType" in bounded.result, false);
   assert.match(bounded.result.content[0].text, /structured envelope archived/);
+
+  const error = boundToolResultEnvelope(
+    { stateDir },
+    "caller-a",
+    {
+      content: [{ type: "text", text: "y".repeat(13_000) }],
+      isError: true,
+      resultType: "tool_error",
+    }
+  );
+  assert.equal(error.result.isError, true);
+  assert.equal(error.result.resultType, "tool_error");
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
@@ -70,6 +82,12 @@ test("recent usage formatting is caller-scoped and ignores malformed records", (
           isError: true,
         }),
         JSON.stringify({
+          ts: "2026-07-29T00:00:30.000Z",
+          agent: "caller-a",
+          tool: "tool_describe",
+          server: "fixture",
+        }),
+        JSON.stringify({
           ts: "2026-07-29T00:01:00.000Z",
           agent: "caller-b",
           tool: "tool_search",
@@ -80,6 +98,7 @@ test("recent usage formatting is caller-scoped and ignores malformed records", (
 
     const caller = recentUsageEvents({ stateDir }, 10, "caller-a");
     assert.match(caller, /fixture › echo \(12ms\) ERROR/);
+    assert.match(caller, /fixture › \*/);
     assert.doesNotMatch(caller, /caller-b/);
 
     const operator = recentUsageEvents({ stateDir }, 1);
@@ -154,6 +173,17 @@ test("caller resolution fails closed for malformed modern metadata", () => {
     assurance: "none",
     protocolEra: "modern",
   });
+
+  const missingModernIdentity = resolveCallerContext(
+    server,
+    { era: "modern" },
+    {
+      mcpReq: {
+        envelope: { [CLIENT_INFO_META_KEY]: null },
+      },
+    }
+  );
+  assert.equal(missingModernIdentity.label, "unknown");
 
   const legacy = resolveCallerContext(
     server,
