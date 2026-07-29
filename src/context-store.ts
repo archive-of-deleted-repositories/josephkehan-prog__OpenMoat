@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -27,14 +28,19 @@ const CONTROL_CHARACTERS =
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
 
 export function contextNamespace(caller: string | undefined): string {
-  return (
-    (caller ?? "")
-      .trim()
+  const label = (caller ?? "").trim() || "unknown";
+  const readable =
+    label
       .toLowerCase()
       .replace(/[^a-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 64) || "unknown"
-  );
+      .slice(0, 44) || "unknown";
+  const identity = crypto
+    .createHash("sha256")
+    .update(label)
+    .digest("hex")
+    .slice(0, 16);
+  return `${readable}--${identity}`;
 }
 
 function safeText(value: string): string {

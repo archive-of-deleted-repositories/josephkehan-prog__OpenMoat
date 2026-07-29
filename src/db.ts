@@ -9,8 +9,11 @@ import { DatabaseSync } from "node:sqlite";
  * makes contending writers queue briefly instead.
  */
 export function openStateDb(dbPath: string, schema: string): DatabaseSync {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const directory = path.dirname(dbPath);
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  fs.chmodSync(directory, 0o700);
   const db = new DatabaseSync(dbPath);
+  fs.chmodSync(dbPath, 0o600);
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA busy_timeout = 5000;");
   db.exec(schema);

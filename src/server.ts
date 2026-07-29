@@ -41,6 +41,43 @@ import { searchToolCatalog } from "./tool-catalog.js";
 import { OPENMOAT_VERSION } from "./version.js";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
+const MAX_TOOL_RESULT_CHARS = 12_000;
+
+export function boundToolResultEnvelope(
+  cfg: OpenMoatConfig,
+  owner: string,
+  result: CallToolResult
+): { result: CallToolResult; archived: string | null } {
+  const serialized = JSON.stringify(result);
+  if (serialized.length <= MAX_TOOL_RESULT_CHARS) {
+    return { result, archived: null };
+  }
+  const hash = getArchive(cfg).store(owner, serialized);
+  const marker = {
+    hash,
+    chars: serialized.length,
+    fetchTool: "tool_result_fetch",
+  };
+  return {
+    result: {
+      content: [
+        {
+          type: "text",
+          text:
+            `Tool result structured envelope archived (${serialized.length.toLocaleString()} chars). ` +
+            `Retrieve it with tool_result_fetch {"hash":"${hash}","offset":0}.`,
+        },
+      ],
+      structuredContent: { openmoatArchivedResult: marker },
+      _meta: { "openmoat.dev/archivedResult": marker },
+      ...(result.isError === undefined ? {} : { isError: result.isError }),
+      ...("resultType" in result
+        ? { resultType: result.resultType }
+        : {}),
+    },
+    archived: hash,
+  };
+}
 
 export interface CallerContext {
   label: string;
@@ -107,24 +144,37 @@ export function resolveCallerContext(
 
 /** Tail the raw usage log (falls back into the rotated generation if the live
  *  file is short). One line per event: ts, agent, tool, and the call target. */
-export function recentUsageEvents(cfg: OpenMoatConfig, n: number): string {
+export function recentUsageEvents(
+  cfg: OpenMoatConfig,
+  n: number,
+  caller?: string
+): string {
   const file = path.join(cfg.stateDir, "usage.jsonl");
   let lines: string[] = [];
   for (const f of [`${file}.1`, file]) {
     if (fs.existsSync(f)) lines.push(...fs.readFileSync(f, "utf8").split("\n").filter(Boolean));
   }
-  lines = lines.slice(-n);
-  if (!lines.length) return "(no usage events yet)";
-  return lines
-    .map((l) => {
+  const events = lines.flatMap((line) => {
       try {
-        const e = JSON.parse(l) as Record<string, unknown>;
-        const what = e.tool === "tool_call" || e.tool === "tool_describe" ? `${e.server} › ${e.target ?? "*"}` : `"${e.query ?? ""}"`;
-        const err = e.isError ? " ERROR" : "";
-        return `${e.ts} [${e.agent ?? "?"}] ${e.tool}: ${what}${e.ms != null ? ` (${e.ms}ms)` : ""}${err}`;
+        return [JSON.parse(line) as Record<string, unknown>];
       } catch {
-        return l.slice(0, 160);
+        return [];
       }
+    });
+  const visible = events
+    .filter((event) => caller === undefined || event.agent === caller)
+    .slice(-n);
+  if (!visible.length) return "(no usage events yet)";
+  return visible
+    .map((event) => {
+      const what =
+        event.tool === "tool_call" || event.tool === "tool_describe"
+          ? `${event.server} › ${event.target ?? "*"}`
+          : "search";
+      const err = event.isError ? " ERROR" : "";
+      return `${event.ts} [${event.agent ?? "?"}] ${event.tool}: ${what}${
+        event.ms != null ? ` (${event.ms}ms)` : ""
+      }${err}`;
     })
     .join("\n");
 }
@@ -377,7 +427,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         savedChars += saved;
         let text = compressed;
         if (text.length > 12000) {
-          const hash = getArchive(cfg).store(text);
+          const hash = getArchive(cfg).store(agent, text);
           archived = hash;
           text =
             text.slice(0, 4000) +
@@ -385,6 +435,8 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         }
         return { ...block, text };
       });
+      const bounded = boundToolResultEnvelope(cfg, agent, { ...r, content });
+      if (bounded.archived) archived = bounded.archived;
       logUsage(cfg, {
         tool: "tool_call",
         agent,
@@ -395,8 +447,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         savedChars,
         archived,
       });
-      const result: CallToolResult = { ...r, content };
-      return result;
+      return bounded.result;
     }
   );
 
@@ -412,10 +463,11 @@ ${servers.length} configured MCP server(s) are available through tool_search →
         find: z.string().optional(),
       },
     },
-    async ({ hash, offset, limit, find }) => {
+    async ({ hash, offset, limit, find }, ctx) => {
       const arch = getArchive(cfg);
+      const owner = agentName(ctx);
       if (find) {
-        const matches = arch.find(hash, find);
+        const matches = arch.find(owner, hash, find);
         if (!matches) return text(`No archived result for hash '${hash}' (archives are pruned after 14 days).`);
         if (!matches.length) return text(`No lines matching "${find}" in archived result '${hash}'.`);
         return text(
@@ -424,7 +476,7 @@ ${servers.length} configured MCP server(s) are available through tool_search →
             .join("\n") + `\n\n[read around a match: tool_result_fetch {"hash":"${hash}","offset":<@offset>,"limit":2000}]`
         );
       }
-      const hit = arch.fetch(hash, offset ?? 0, limit ?? 8000);
+      const hit = arch.fetch(owner, hash, offset ?? 0, limit ?? 8000);
       if (!hit) return text(`No archived result for hash '${hash}' (archives are pruned after 14 days).`);
       const next = (offset ?? 0) + hit.slice.length;
       return text(
@@ -450,22 +502,30 @@ ${servers.length} configured MCP server(s) are available through tool_search →
     "moat_usage",
     {
       description:
-        "Per-caller tool-call tracker with volume, error rate, latency, and recency. Filter by caller or server; `hours` bounds the window and `recent` appends raw usage events.",
+        "Caller-scoped tool-call tracker with volume, error rate, latency, and recency. `hours` bounds the window and `recent` appends privacy-safe events for the current caller.",
       inputSchema: {
-        agent: z.string().optional(),
         server: z.string().optional(),
         hours: z.number().int().min(1).max(24 * 30).optional(),
         recent: z.number().int().min(1).max(100).optional(),
       },
     },
-    async ({ agent, server: srv, hours, recent }) => {
+    async ({ server: srv, hours, recent }, ctx) => {
+      const caller = agentName(ctx);
       const report = getHealth(cfg).usageReport({
-        agent,
+        agent: caller,
         server: srv,
         sinceMs: (hours ?? 24) * 3600_000,
       });
       const parts = [report];
-      if (recent) parts.push(`RECENT EVENTS (last ${recent}):\n${recentUsageEvents(cfg, recent)}`);
+      if (recent) {
+        parts.push(
+          `RECENT EVENTS (last ${recent}):\n${recentUsageEvents(
+            cfg,
+            recent,
+            caller
+          )}`
+        );
+      }
       return text(parts.join("\n\n"));
     }
   );

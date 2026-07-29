@@ -123,17 +123,22 @@ export class SecretRedactor {
       return value.map((item) => this.#redactUnknown(item));
     }
     if (value !== null && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [
-          key,
-          this.#redactUnknown(item),
-        ])
-      );
+      const entries: [string, unknown][] = [];
+      const used = new Set<string>();
+      for (const [key, item] of Object.entries(value)) {
+        const base = this.text(key);
+        let safeKey = base;
+        for (let suffix = 2; used.has(safeKey); suffix++) {
+          safeKey = `${base}#${suffix}`;
+        }
+        used.add(safeKey);
+        entries.push([safeKey, this.#redactUnknown(item)]);
+      }
+      return Object.fromEntries(entries);
     }
     return value;
   }
 }
-
 export async function withDeadline<T>(
   operation: Promise<T>,
   timeoutMs: number,
@@ -191,4 +196,3 @@ export class PoolBudget {
     this.#keys.delete(key);
   }
 }
-

@@ -1,7 +1,6 @@
 # Stateless MCP v0.4 TDD Evidence
 
-Source:
-`~/mac/deliverable/OpenMoat/STATELESS-MCP-HANDOFF-2026-07-29.md`.
+Source: user-approved stateless MCP v0.4 handoff.
 
 ## User journeys
 

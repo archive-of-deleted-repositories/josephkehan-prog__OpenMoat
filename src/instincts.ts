@@ -205,18 +205,42 @@ export function importPack(cfg: OpenMoatConfig, json: string): { added: number; 
 
 const USAGE_ROTATE_BYTES = 10 * 1024 * 1024;
 
+function privacySafeUsageEvent(
+  event: Record<string, unknown>
+): Record<string, unknown> {
+  const { query, ...safe } = event;
+  return typeof query === "string"
+    ? { ...safe, queryLength: query.length }
+    : safe;
+}
+
 /** Append a usage event (tool_search/tool_call/…) for later analysis.
  *  Async (never blocks the tool-call hot path) and rotated at 10MB (one
  *  generation kept as usage.jsonl.1) so the file can't grow forever. */
 export function logUsage(cfg: OpenMoatConfig, event: Record<string, unknown>): void {
   const file = path.join(cfg.stateDir, "usage.jsonl");
-  const line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n";
+  const line =
+    JSON.stringify({
+      ts: new Date().toISOString(),
+      ...privacySafeUsageEvent(event),
+    }) + "\n";
   void (async () => {
     try {
-      await fs.promises.mkdir(cfg.stateDir, { recursive: true });
+      await fs.promises.mkdir(cfg.stateDir, {
+        recursive: true,
+        mode: 0o700,
+      });
+      await fs.promises.chmod(cfg.stateDir, 0o700);
       const size = await fs.promises.stat(file).then((s) => s.size, () => 0);
-      if (size >= USAGE_ROTATE_BYTES) await fs.promises.rename(file, `${file}.1`);
-      await fs.promises.appendFile(file, line);
+      if (size >= USAGE_ROTATE_BYTES) {
+        await fs.promises.rename(file, `${file}.1`);
+        await fs.promises.chmod(`${file}.1`, 0o600);
+      }
+      await fs.promises.appendFile(file, line, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      await fs.promises.chmod(file, 0o600);
     } catch (e) {
       // telemetry must never break a tool call — but don't fail silently either
       console.error(`openmoat: usage log write failed: ${e}`);

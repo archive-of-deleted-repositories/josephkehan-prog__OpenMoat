@@ -18,18 +18,41 @@ export class Archive {
       path.join(cfg.stateDir, "archive.db"),
       "CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, content TEXT NOT NULL, bytes INTEGER NOT NULL, created INTEGER NOT NULL)"
     );
+    const columns = this.db
+      .prepare("PRAGMA table_info(blobs)")
+      .all() as unknown as { name: string }[];
+    if (!columns.some((column) => column.name === "owner")) {
+      this.db.exec(
+        "ALTER TABLE blobs ADD COLUMN owner TEXT NOT NULL DEFAULT 'legacy-unscoped'"
+      );
+    }
   }
 
-  store(text: string): string {
-    const hash = crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+  store(owner: string, text: string): string {
+    const hash = crypto
+      .createHash("sha256")
+      .update(owner)
+      .update("\0")
+      .update(text)
+      .digest("hex")
+      .slice(0, 16);
     this.db
-      .prepare("INSERT OR IGNORE INTO blobs(hash, content, bytes, created) VALUES(?,?,?,?)")
-      .run(hash, text, text.length, Date.now());
+      .prepare(
+        "INSERT OR IGNORE INTO blobs(hash, content, bytes, created, owner) VALUES(?,?,?,?,?)"
+      )
+      .run(hash, text, text.length, Date.now(), owner);
     return hash;
   }
 
-  fetch(hash: string, offset = 0, limit = 8000): { slice: string; total: number; remaining: number } | null {
-    const row = this.db.prepare("SELECT content, bytes FROM blobs WHERE hash = ?").get(hash) as
+  fetch(
+    owner: string,
+    hash: string,
+    offset = 0,
+    limit = 8000
+  ): { slice: string; total: number; remaining: number } | null {
+    const row = this.db
+      .prepare("SELECT content, bytes FROM blobs WHERE hash = ? AND owner = ?")
+      .get(hash, owner) as
       | unknown as { content: string; bytes: number }
       | undefined;
     if (!row) return null;
@@ -39,8 +62,15 @@ export class Archive {
 
   /** Content-aware retrieval (jmunch-style): search inside an archived blob
    *  instead of paging blindly. Returns matching lines with char offsets. */
-  find(hash: string, pattern: string, maxMatches = 20): { offset: number; line: string }[] | null {
-    const row = this.db.prepare("SELECT content FROM blobs WHERE hash = ?").get(hash) as
+  find(
+    owner: string,
+    hash: string,
+    pattern: string,
+    maxMatches = 20
+  ): { offset: number; line: string }[] | null {
+    const row = this.db
+      .prepare("SELECT content FROM blobs WHERE hash = ? AND owner = ?")
+      .get(hash, owner) as
       | unknown as { content: string }
       | undefined;
     if (!row) return null;

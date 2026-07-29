@@ -34,8 +34,13 @@ export function initWorkspace(destination: string, force = false, root = repoRoo
     created.push(target);
   }
 
-  for (const relative of ["state", "skills", "plugins", "context"]) {
+  for (const relative of ["skills", "plugins"]) {
     fs.mkdirSync(path.join(dir, relative), { recursive: true });
+  }
+  for (const relative of ["state", "context"]) {
+    const privateDir = path.join(dir, relative);
+    fs.mkdirSync(privateDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(privateDir, 0o700);
   }
 
   const secrets = path.join(dir, "secrets.env");
