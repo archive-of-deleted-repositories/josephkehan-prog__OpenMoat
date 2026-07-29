@@ -18,9 +18,10 @@ test("canonical coverage measures the v0.4 gateway and server paths", () => {
 
   assert.match(coverage, /dist\/gateway\.js/);
   assert.match(coverage, /dist\/server\.js/);
-  assert.match(coverage, /test-coverage-lines=50/);
-  assert.match(coverage, /test-coverage-functions=50/);
-  assert.match(coverage, /test-coverage-branches=25/);
+  assert.match(coverage, /--lines=80/);
+  assert.match(coverage, /--functions=80/);
+  assert.match(coverage, /--branches=80/);
+  assert.doesNotMatch(coverage, /test-coverage-(?:lines|functions|branches)=(?:25|50)/);
   assert.match(
     fs.readFileSync("scripts/verify.mjs", "utf8"),
     /run\("npm", \["run", "test:coverage"\]\)/

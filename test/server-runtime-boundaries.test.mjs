@@ -28,6 +28,25 @@ test("small tool-result envelopes pass through without archival", () => {
   assert.equal(bounded.result, result);
 });
 
+test("oversized envelopes return a minimal caller-bound archive marker", () => {
+  const stateDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "openmoat-bound-result-")
+  );
+  const bounded = boundToolResultEnvelope(
+    { stateDir },
+    "caller-a",
+    {
+      content: [{ type: "text", text: "x".repeat(13_000) }],
+    }
+  );
+
+  assert.match(bounded.archived, /^[a-f0-9]{16}$/);
+  assert.equal(bounded.result.isError, undefined);
+  assert.equal("resultType" in bounded.result, false);
+  assert.match(bounded.result.content[0].text, /structured envelope archived/);
+  fs.rmSync(stateDir, { recursive: true, force: true });
+});
+
 test("recent usage formatting is caller-scoped and ignores malformed records", () => {
   const stateDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "openmoat-recent-usage-")
@@ -143,4 +162,26 @@ test("caller resolution fails closed for malformed modern metadata", () => {
   );
   assert.equal(legacy.label, "legacy-client");
   assert.equal(legacy.clientInfo.version, "1.0.0");
+
+  const modernWithoutVersion = resolveCallerContext(
+    server,
+    { era: "modern" },
+    {
+      mcpReq: {
+        envelope: {
+          [CLIENT_INFO_META_KEY]: { name: "modern-client", version: 7 },
+        },
+      },
+    }
+  );
+  assert.deepEqual(modernWithoutVersion.clientInfo, {
+    name: "modern-client",
+  });
+
+  const noLegacyIdentity = resolveCallerContext(
+    { server: { getClientVersion: () => undefined } },
+    { era: "legacy" },
+    { mcpReq: { envelope: null } }
+  );
+  assert.equal(noLegacyIdentity.label, "unknown");
 });
