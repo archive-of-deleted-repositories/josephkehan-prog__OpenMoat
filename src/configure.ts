@@ -8,7 +8,7 @@ interface RawTarget {
   [key: string]: unknown;
 }
 
-interface RawHubConfig {
+interface RawOpenMoatConfig {
   targets?: Record<string, RawTarget>;
   [key: string]: unknown;
 }
@@ -31,13 +31,13 @@ export interface TargetConfigurationResult {
 }
 
 function readRawConfig(file: string): {
-  raw: RawHubConfig;
+  raw: RawOpenMoatConfig;
   serialize: (changes: TargetConfigurationChange[]) => string;
 } {
   const source = fs.readFileSync(file, "utf8");
   const json = path.extname(file).toLowerCase() === ".json";
   const document = json ? undefined : parseDocument(source);
-  const raw = (json ? JSON.parse(source) : document!.toJS()) as RawHubConfig;
+  const raw = (json ? JSON.parse(source) : document!.toJS()) as RawOpenMoatConfig;
   if (!raw.targets || typeof raw.targets !== "object" || Array.isArray(raw.targets)) {
     throw new Error(`${file} has no targets object`);
   }
@@ -54,10 +54,10 @@ function readRawConfig(file: string): {
 }
 
 /**
- * Preview or apply explicit target enablement in the Hub config only. This
+ * Preview or apply explicit target enablement in the OpenMoat config only. This
  * function never invokes an adapter, so it cannot create or modify a harness
  * configuration file. Applying uses the same backup + atomic rename path as
- * normal Hub synchronization.
+ * normal OpenMoat synchronization.
  */
 export function configureTargets(
   file: string,
@@ -104,10 +104,10 @@ export function configureTargets(
 
 export function renderTargetConfiguration(result: TargetConfigurationResult): string {
   const heading = result.applied
-    ? "APPLIED Hub target configuration."
+    ? "APPLIED OpenMoat target configuration."
     : result.changed
-      ? "PREVIEW Hub target configuration — no files changed."
-      : "NO CHANGES required in Hub target configuration.";
+      ? "PREVIEW OpenMoat target configuration — no files changed."
+      : "NO CHANGES required in OpenMoat target configuration.";
   const lines = [heading];
 
   for (const change of result.changes) {
@@ -117,13 +117,13 @@ export function renderTargetConfiguration(result: TargetConfigurationResult): st
     lines.push(`  ${result.requestedTargets.join(", ")} already ${result.operation === "enable" ? "enabled" : "disabled"}`);
   }
 
-  lines.push(`Hub config: ${result.configFile}`);
+  lines.push(`OpenMoat config: ${result.configFile}`);
   if (result.backup) lines.push(`Backup: ${result.backup}`);
   lines.push("Harness files written: none.");
   if (result.changed && !result.applied) {
     lines.push("Review the target list, then re-run this command with --apply.");
   } else {
-    lines.push("Next: hub doctor && hub sync --dry-run");
+    lines.push("Next: moat doctor && moat sync --dry-run");
   }
   return lines.join("\n");
 }

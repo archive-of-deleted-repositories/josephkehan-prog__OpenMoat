@@ -11,7 +11,7 @@ const FMT = { formattingOptions: { insertSpaces: true, tabSize: 2 } };
  * JSONC — edited with jsonc-parser so the user's comments survive.
  *   stdio: { command, args, env? }
  *   http:  { url, headers? }
- * Zed forwards these to external ACP agents too, so wiring the hub here also
+ * Zed forwards these to external ACP agents too, so wiring the OpenMoat here also
  * hands it to claurst-as-editor-agent.
  */
 function mapZed(s: ResolvedServer): unknown {

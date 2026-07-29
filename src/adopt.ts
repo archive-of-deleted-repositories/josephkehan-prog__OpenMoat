@@ -8,7 +8,7 @@
 
 import fs from "node:fs";
 import { backupFile } from "./backup.js";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import {
   getFederationSnapshot,
   invalidateFederationCache,
@@ -25,7 +25,7 @@ interface Found {
   adoptReason?: string;
 }
 
-export function scanHarnesses(cfg: HubConfig): Found[] {
+export function scanHarnesses(cfg: OpenMoatConfig): Found[] {
   const out: Found[] = [];
   for (const [id, t] of Object.entries(cfg.targets)) {
     if (!t.enabled) continue;
@@ -42,7 +42,7 @@ export function scanHarnesses(cfg: HubConfig): Found[] {
   return out;
 }
 
-export function adopt(cfg: HubConfig, dryRun: boolean): string[] {
+export function adopt(cfg: OpenMoatConfig, dryRun: boolean): string[] {
   const lines: string[] = [];
   const known = new Set(
     getFederationSnapshot(cfg, true).servers.flatMap((asset) => [
@@ -74,7 +74,7 @@ export function adopt(cfg: HubConfig, dryRun: boolean): string[] {
   lines.push(...skipped);
   const raw = JSON.parse(fs.readFileSync(cfg.registry, "utf8")) as { servers: ServerDef[] };
   for (const [name, f] of drift) {
-    lines.push(`${dryRun ? "[DRY RUN] would adopt" : "adopted"} '${name}' from ${f.source} (gatewayOnly, QUARANTINED until \`hub trust ${name}\`)`);
+    lines.push(`${dryRun ? "[DRY RUN] would adopt" : "adopted"} '${name}' from ${f.source} (gatewayOnly, QUARANTINED until \`moat trust ${name}\`)`);
     if (!dryRun) {
       raw.servers.push({
         gatewayOnly: true,
@@ -94,7 +94,7 @@ export function adopt(cfg: HubConfig, dryRun: boolean): string[] {
 }
 
 /** Approve a quarantined server. */
-export function trust(cfg: HubConfig, name: string): string {
+export function trust(cfg: OpenMoatConfig, name: string): string {
   const raw = JSON.parse(fs.readFileSync(cfg.registry, "utf8")) as { servers: ServerDef[] };
   const s = raw.servers.find((x) => x.name === name);
   if (!s) return `'${name}' is not in the registry`;

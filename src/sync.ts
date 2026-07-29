@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { writeFileSafe } from "./backup.js";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import {
   federatedSkills,
   getFederationSnapshot,
@@ -75,7 +75,7 @@ function writableTarget(file: string): string {
 }
 
 /** Count cataloged tools (### headings) across state/mcp-tools/*.md. */
-function countCatalogTools(cfg: HubConfig): number {
+function countCatalogTools(cfg: OpenMoatConfig): number {
   const dir = path.join(cfg.stateDir, "mcp-tools");
   if (!fs.existsSync(dir)) return 0;
   let n = 0;
@@ -90,7 +90,7 @@ function countCatalogTools(cfg: HubConfig): number {
  *  knows the gateway exists. Base rules + promoted instincts (ECC-style
  *  learned triggers from the self-evaluation loop). Facts (roster, counts,
  *  path) are derived from live state so they can't go stale. */
-function buildGatewayBlock(cfg: HubConfig): string {
+export function buildGatewayBlock(cfg: OpenMoatConfig): string {
   const learned = promotedInstincts(cfg);
   const learnedSection = learned.length
     ? `\nLearned triggers (self-tuned from past misses — confidence-scored):\n${learned
@@ -106,43 +106,34 @@ function buildGatewayBlock(cfg: HubConfig): string {
     (asset) => asset.selected && !asset.value.disabled
   ).length;
   const toolCount = countCatalogTools(cfg);
-  const hubPath = tildify(path.dirname(cfg.registry).replace(/\/registry$/, ""));
+  const moatPath = tildify(path.dirname(cfg.registry).replace(/\/registry$/, ""));
   return `${BEGIN}
-## This machine's shared brain (openmoat) — system map
+## OpenMoat system map
 
-Every agent here (${roster}) shares one hub at ${hubPath}. Harnesses carry the
-Hub gateway plus only deliberately native helpers; ${serverCount} selected MCP
-servers sit behind the federated catalog, invisible until needed.
+Enabled clients (${roster || "none"}) share OpenMoat at ${moatPath}.
+${serverCount} selected MCP server(s) sit behind the federated catalog and
+start only when called.
 
-THE REFLEX — for web research, scraping, browser automation, docs lookup,
-images, GitHub, data files, or ANY external capability, even unnamed:
+For any external capability:
 1. \`tool_search("what you need")\` — semantic search over ${toolCount || "the"} cataloged tools
 2. \`tool_describe(server, tool)\` — exact schema
-3. \`tool_call(server, tool, arguments)\` — hub spawns on demand and proxies
+3. \`tool_call(server, tool, arguments)\` — OpenMoat starts and proxies the server
 Never say a tool is unavailable before tool_search.
 
-tool_call extras: pass \`cwd\` for per-project servers (squish, git). Oversized
+Pass \`cwd\` for servers whose behavior depends on the working directory. Oversized
 results return a 4K head + archive hash — continue with \`tool_result_fetch\`
-{hash, offset} or search inside via {hash, find}. Failures/slowness → \`hub_health\`
+{hash, offset} or search inside via {hash, find}. Failures/slowness → \`moat_health\`
 (circuit breakers + latency stats). QUARANTINED servers need the human's
-approval — suggest \`hub trust <name>\`, never self-approve. OAuth remotes
-(github…) work through the hub; if auth is requested: \`hub auth <name>\`.
+approval — suggest \`moat trust <name>\`, never self-approve. If an OAuth server
+requests authorization, use \`moat auth <name>\`.
 
-MEMORY — three layers, use the right one:
-- \`squish_remember\`/\`squish_recall\`: structured project facts & learnings
-- \`rag_search\`: configured workspace documents, profiles, skills, and guides;
-  the full operator guide: rag_search "operator guide for agents")
-- \`context_save\`/\`context_latest\`: session handoffs to the NEXT agent
-
-Session start: \`hub_bootstrap\`. Skills are PULL-ONLY — not preloaded; when a
-task matches one, \`skills_list\` to find it then \`skill_read\` to load it (or
-\`rag_search\`). Self-improvement: noticed you missed a gateway tool? One-line
-\`instinct_report\` — proven instincts auto-publish here.
+Session start: \`moat_bootstrap\`. Optional profile, handoff, RAG, skills,
+plugins, and instinct tools appear only when enabled in the Moatfile.
 ${learnedSection}${END}`;
 }
 
 /** Inject/refresh the gateway instructions in the shared AGENTS.md. */
-function syncGatewayInstructions(cfg: HubConfig, dryRun: boolean): boolean {
+function syncGatewayInstructions(cfg: OpenMoatConfig, dryRun: boolean): boolean {
   const file = cfg.memoryImport;
   const block = buildGatewayBlock(cfg);
   let text = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
@@ -158,7 +149,7 @@ function syncGatewayInstructions(cfg: HubConfig, dryRun: boolean): boolean {
 }
 
 /** Inject/refresh a managed import block in a memory file (CLAUDE.md / AGENTS.md). */
-function syncMemoryBlock(memoryFile: string, importPath: string, cfg: HubConfig, dryRun: boolean): string | null {
+function syncMemoryBlock(memoryFile: string, importPath: string, cfg: OpenMoatConfig, dryRun: boolean): string | null {
   const block = `${BEGIN}\nShared profile & identity (managed by openmoat — do not edit between markers):\n@${importPath}\n${END}`;
   let text = fs.existsSync(memoryFile) ? fs.readFileSync(memoryFile, "utf8") : "";
   const re = new RegExp(`${BEGIN}[\\s\\S]*?${END}`);
@@ -181,7 +172,7 @@ export interface SyncReport {
   warnings: string[];
 }
 
-export function runSync(cfg: HubConfig, opts: { dryRun?: boolean; only?: string } = {}): SyncReport {
+export function runSync(cfg: OpenMoatConfig, opts: { dryRun?: boolean; only?: string } = {}): SyncReport {
   const dryRun = opts.dryRun ?? false;
   const lines: string[] = [];
   let hasChanges = false;
@@ -218,10 +209,10 @@ export function runSync(cfg: HubConfig, opts: { dryRun?: boolean; only?: string 
     for (const n of res.notes) lines.push(`  · ${previewNote(n, dryRun)}`);
   }
 
-  // 2) Skills are PULL-ONLY. The hub does not push skill symlinks into any
+  // 2) Skills are PULL-ONLY. The OpenMoat does not push skill symlinks into any
   //    harness — agents fetch skills on demand via skills_list / skill_read /
   //    rag_search when a task needs one. If a target still has skillsLink set,
-  //    or the hub created links in a past run, tear them down here.
+  //    or the OpenMoat created links in a past run, tear them down here.
   for (const adapter of ADAPTERS) {
     const target = cfg.targets[adapter.id];
     if (opts.only && opts.only !== adapter.id) continue;
@@ -279,7 +270,7 @@ function inspectRagFile(dbPath: string): DoctorCheck {
       id: "rag",
       status: "warning",
       path: dbPath,
-      message: `rag: not indexed — ${dbPath} missing (run hub index)`,
+      message: `rag: not indexed — ${dbPath} missing (run moat index)`,
     };
   }
   try {
@@ -305,8 +296,8 @@ function inspectRagFile(dbPath: string): DoctorCheck {
   }
 }
 
-/** Structured sanity checks that never write Hub or harness state. */
-export function runDoctorReport(cfg: HubConfig): DoctorReport {
+/** Structured sanity checks that never write OpenMoat or harness state. */
+export function runDoctorReport(cfg: OpenMoatConfig): DoctorReport {
   const checks: DoctorCheck[] = [];
   const snapshot = getFederationSnapshot(cfg, true);
   const defs = snapshot.servers.filter((asset) => asset.selected).map((asset) => asset.value);
@@ -404,7 +395,7 @@ export function runDoctorReport(cfg: HubConfig): DoctorReport {
         target: id,
         status: missing.length ? "warning" : "ok",
         path: t.config,
-        message: `[${id}] ${t.config} ok${missing.length ? ` · missing native: ${missing.join(", ")} (run hub sync)` : " · native servers ✓"}`,
+        message: `[${id}] ${t.config} ok${missing.length ? ` · missing native: ${missing.join(", ")} (run moat sync)` : " · native servers ✓"}`,
       });
     } catch (error) {
       checks.push({
@@ -430,6 +421,6 @@ export function runDoctorReport(cfg: HubConfig): DoctorReport {
 }
 
 /** Backward-compatible human lines for callers that do not need structure. */
-export function runDoctor(cfg: HubConfig): string[] {
+export function runDoctor(cfg: OpenMoatConfig): string[] {
   return runDoctorReport(cfg).checks.map((check) => check.message);
 }

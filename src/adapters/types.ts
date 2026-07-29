@@ -19,7 +19,7 @@ export interface FoundServer {
   def: Partial<ServerDef>;
   /** Whether the harness will actually start/use this configured server. */
   active?: boolean;
-  /** Whether this definition can be represented safely in the hub registry. */
+  /** Whether this definition can be represented safely in the OpenMoat registry. */
   adoptable?: boolean;
   /** Human-readable reason adoption is unsafe or lossy. */
   adoptReason?: string;

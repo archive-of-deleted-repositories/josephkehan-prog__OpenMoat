@@ -1,4 +1,4 @@
-import type { GatewayPolicyRule, HubConfig } from "./config.js";
+import type { GatewayPolicyRule, OpenMoatConfig } from "./config.js";
 
 export interface GatewayDecision {
   allowed: boolean;
@@ -23,7 +23,7 @@ function decideRule(rule: GatewayPolicyRule | undefined, server: string, tool: s
 }
 
 export function authorizeGateway(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   agentName: string | undefined,
   server: string,
   tool = "*",
@@ -71,7 +71,7 @@ export function authorizeGateway(
 }
 
 export function requireGatewayAuthorization(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   agentName: string | undefined,
   server: string,
   tool = "*",

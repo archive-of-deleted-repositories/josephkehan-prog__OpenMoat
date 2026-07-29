@@ -2,13 +2,13 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import { openStateDb } from "./db.js";
 import { loadSecrets } from "./registry.js";
 
 /**
  * Document RAG over the canonical workspace corpus (memory/ handoffs, profile
- * files, skills, guides). Complements squish, which is the *structured* agent
+ * files, skills, guides). Complements project-memory server, which is the *structured* agent
  * memory (facts/beliefs per project). This layer answers: "search everything
  * written down in the configured corpus".
  *
@@ -42,7 +42,7 @@ const MAX_CORPUS_FILE_BYTES = 1024 * 1024;
 export class Rag {
   private db: DatabaseSync;
 
-  constructor(private cfg: HubConfig) {
+  constructor(private cfg: OpenMoatConfig) {
     this.db = openStateDb(cfg.rag.db, `
       CREATE TABLE IF NOT EXISTS files (
         path TEXT PRIMARY KEY, hash TEXT NOT NULL, indexed_at INTEGER NOT NULL,
@@ -54,7 +54,7 @@ export class Rag {
         content TEXT NOT NULL, embedding BLOB
       );
       CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file);
-      -- Schema-level duplicate prevention (2026-07-25 audit): concurrent hub
+      -- Schema-level duplicate prevention (2026-07-25 audit): concurrent OpenMoat
       -- MCP processes race in index() (check-prev → wipe → insert interleaves),
       -- which produced 60k duplicate chunks. This UNIQUE index makes dupes
       -- impossible regardless of process interleaving. Requires the table to
@@ -248,7 +248,7 @@ export class Rag {
         ? await this.embedBatched(chunks.map((c) => `${c.heading}\n${c.content}`))
         : null;
       if (vectors) anyEmbedded = true;
-      // BEGIN IMMEDIATE serializes concurrent hub MCP processes at write time
+      // BEGIN IMMEDIATE serializes concurrent OpenMoat MCP processes at write time
       // (busy_timeout=5000 in db.ts makes them queue instead of erroring).
       // This closes the check-prev → wipe → insert race that produced 60k
       // duplicate chunks; the UNIQUE index is the belt-and-braces backstop.
@@ -326,7 +326,7 @@ export class Rag {
     });
     scored.sort((a, b) => b.score - a.score);
     // Dedupe identical (file, heading) chunks: concurrent index() runs from
-    // parallel hub MCP processes can double-insert a file's chunks; the dupes
+    // parallel OpenMoat MCP processes can double-insert a file's chunks; the dupes
     // then crowd out distinct hits after re-ranking. Keep the best score.
     const seenChunk = new Set<string>();
     return scored

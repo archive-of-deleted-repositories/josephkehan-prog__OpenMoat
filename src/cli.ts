@@ -13,7 +13,7 @@ import {
 import { Rag } from "./rag.js";
 import { serve } from "./server.js";
 import { runDoctorReport, runSync } from "./sync.js";
-import { HUB_VERSION } from "./version.js";
+import { OPENMOAT_VERSION } from "./version.js";
 
 const program = new Command();
 program
@@ -37,7 +37,7 @@ program
 
 program
   .name("moat")
-  .version(HUB_VERSION)
+  .version(OPENMOAT_VERSION)
   .description("OpenMoat: local-first MCP gateway, reconciliation, profile, handoffs, and optional shared-brain modules.");
 
 program
@@ -201,7 +201,7 @@ program
 
 program
   .command("doctor")
-  .description("Check registry, skills, profile files, and each harness config (incl. squish presence)")
+  .description("Check registry, skills, profile files, and each harness config (incl. project-memory server presence)")
   .option("--json", "machine-readable structured checks")
   .option("--strict", "exit nonzero when warnings or errors remain")
   .action((opts: { json?: boolean; strict?: boolean }) => {
@@ -292,7 +292,7 @@ program
     if (opts.import) {
       const fs = await import("node:fs");
       const r = inst.importPack(cfg, fs.readFileSync(opts.import, "utf8"));
-      console.log(`imported: ${r.added} new, ${r.merged} merged — run \`hub sync\` to publish promoted instincts`);
+      console.log(`imported: ${r.added} new, ${r.merged} merged — run \`moat sync\` to publish promoted instincts`);
       return;
     }
     for (const i of inst.loadInstincts(cfg).sort((a, b) => b.confidence - a.confidence))
@@ -329,7 +329,7 @@ program
       raw.servers.push(entry);
       writeFileSafe(cfg.registry, JSON.stringify(raw, null, 2) + "\n", cfg.stateDir, false);
       invalidateFederationCache(cfg);
-      console.log(`adopted '${entry.name}' QUARANTINED (${entry.command} ${(entry.args as string[]).join(" ")}). Approve: hub trust ${entry.name}`);
+      console.log(`adopted '${entry.name}' QUARANTINED (${entry.command} ${(entry.args as string[]).join(" ")}). Approve: moat trust ${entry.name}`);
       return;
     }
     for (const h of hits) {
@@ -337,7 +337,7 @@ program
       console.log(`  ${h.description}`);
       if (h.command) console.log(`  run: ${h.command}`);
     }
-    if (hits.length) console.log(`\nadopt one:  hub discover ${queryParts.join(" ")} --add "<name>"`);
+    if (hits.length) console.log(`\nadopt one:  moat discover ${queryParts.join(" ")} --add "<name>"`);
   });
 
 program
@@ -355,7 +355,7 @@ program
   .action(async (name: string) => {
     const cfg = loadConfig();
     const { gatewayDescribe, reapAll } = await import("./gateway.js");
-    const out = await gatewayDescribe(cfg, name, undefined, "hub-cli");
+    const out = await gatewayDescribe(cfg, name, undefined, "moat-cli");
     const tools = out.split("\n").filter((l) => l.startsWith("## ")).length;
     console.log(`authorized — '${name}' responds with ${tools} tool(s). Tokens cached in state/oauth/; every agent can now reach it via tool_call.`);
     reapAll();
@@ -381,7 +381,7 @@ program
 
 program
   .command("usage")
-  .description("Per-agent tool-call tracker: which agent called which tool through the hub")
+  .description("Per-agent tool-call tracker: which agent called which tool through the OpenMoat")
   .option("--agent <name>", "filter to one agent (harness clientInfo name)")
   .option("--server <name>", "filter to one upstream server")
   .option("--hours <n>", "window by last-call time", "24")
@@ -404,7 +404,7 @@ program
 
 program
   .command("skills")
-  .description("Show every skill on the hub, grouped by collection (the human-readable catalog)")
+  .description("Show every skill on the OpenMoat, grouped by collection (the human-readable catalog)")
   .option("--json", "machine-readable dump")
   .option("--md <file>", "write a markdown catalog")
   .option("--html <file>", "write a self-contained searchable HTML catalog page")

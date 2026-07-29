@@ -5,7 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { getArchive } from "./archive.js";
 import { compressText } from "./compress.js";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import { ContextStore } from "./context-store.js";
 import {
   federatedPlugins,
@@ -32,13 +32,13 @@ import {
 import { catalogDirs } from "./mcp-rag.js";
 import { Rag } from "./rag.js";
 import { searchToolCatalog } from "./tool-catalog.js";
-import { HUB_VERSION } from "./version.js";
+import { OPENMOAT_VERSION } from "./version.js";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 
 /** Tail the raw usage log (falls back into the rotated generation if the live
  *  file is short). One line per event: ts, agent, tool, and the call target. */
-export function recentUsageEvents(cfg: HubConfig, n: number): string {
+export function recentUsageEvents(cfg: OpenMoatConfig, n: number): string {
   const file = path.join(cfg.stateDir, "usage.jsonl");
   let lines: string[] = [];
   for (const f of [`${file}.1`, file]) {
@@ -60,8 +60,40 @@ export function recentUsageEvents(cfg: HubConfig, n: number): string {
     .join("\n");
 }
 
-export async function serve(cfg: HubConfig): Promise<void> {
-  const server = new McpServer({ name: "openmoat", version: HUB_VERSION });
+interface BootstrapContextReader {
+  latest(
+    caller: string,
+    limit: number
+  ): { relativePath: string; content: string }[];
+}
+
+export function bootstrapPersonalSections(
+  cfg: Pick<OpenMoatConfig, "features" | "profileFiles">,
+  contextStore: BootstrapContextReader,
+  caller: string
+): string[] {
+  const parts: string[] = [];
+  if (cfg.features.profile) {
+    for (const file of cfg.profileFiles) {
+      if (!fs.existsSync(file)) continue;
+      parts.push(
+        `## ${path.basename(file)}\n${fs.readFileSync(file, "utf8").slice(0, 4000)}`
+      );
+    }
+  }
+  if (cfg.features.handoffs) {
+    const latest = contextStore.latest(caller, 1)[0];
+    if (latest) {
+      parts.push(
+        `## Latest caller-scoped context (${latest.relativePath})\n${latest.content.slice(0, 4000)}`
+      );
+    }
+  }
+  return parts;
+}
+
+export async function serve(cfg: OpenMoatConfig): Promise<void> {
+  const server = new McpServer({ name: "openmoat", version: OPENMOAT_VERSION });
   let rag: Rag | undefined;
   const getRag = () => (rag ??= new Rag(cfg));
   const gatewayRuntime = createGatewayRuntime(cfg);
@@ -73,30 +105,29 @@ export async function serve(cfg: HubConfig): Promise<void> {
   const agentName = () => process.env.OPENMOAT_CALLER ?? server.server.getClientVersion()?.name ?? "unknown";
 
   server.registerTool(
-    "hub_bootstrap",
+    "moat_bootstrap",
     {
       description:
-        "Call at session start. Returns the shared profile/identity, the latest context handoff, the skills index, and the MCP registry summary. For long-term memory use the squish tools (squish_recall / squish_remember); for searching workspace documents use rag_search.",
+        "Call at session start. Returns the enabled shared context modules and a summary of the configured MCP registry.",
       inputSchema: {},
     },
     async () => {
       const servers = federatedServers(cfg)
         .map((asset) => asset.value)
         .filter((server) => !server.disabled);
+      const optional = [
+        cfg.features.rag ? "document search" : "",
+        cfg.features.profile ? "shared profile" : "",
+        cfg.features.handoffs ? "caller-scoped handoffs" : "",
+        cfg.features.skills ? "skills" : "",
+        cfg.features.plugins ? "plugins" : "",
+        cfg.features.instincts ? "instincts" : "",
+      ].filter(Boolean);
       const parts: string[] = [
-        `## You are on a hub-managed machine
-Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replace(/\/registry$/, "")}). ${servers.length} MCP servers sit behind this hub — reach ANY capability via tool_search → tool_describe → tool_call (never assume a tool is missing). STANDING ORDER: before reaching for generic WebSearch/WebFetch/curl, run tool_search first — the catalog usually has a specialist (exa for web research, firecrawl for scraping, context7 for library docs, github for repos). Memory: squish = project facts, rag_search = all workspace documents (full guide: rag_search "operator guide for agents"), context_save/latest = handoffs between agents. Oversized results page via tool_result_fetch; failures explain themselves via hub_health; quarantined servers need the human's \`hub trust\`.`,
+        `## OpenMoat session
+${servers.length} configured MCP server(s) are available through tool_search → tool_describe → tool_call. Servers start lazily and remain isolated by working directory. Use moat_health for failures or latency; quarantined servers require the human-only \`moat trust\` command. Optional modules enabled: ${optional.join(", ") || "none"}.`,
+        ...bootstrapPersonalSections(cfg, contextStore, agentName()),
       ];
-      for (const f of cfg.profileFiles) {
-        if (!fs.existsSync(f)) continue;
-        parts.push(`## ${path.basename(f)}\n${fs.readFileSync(f, "utf8").slice(0, 4000)}`);
-      }
-      const latest = contextStore.latest(agentName(), 1)[0];
-      if (latest) {
-        parts.push(
-          `## Latest caller-scoped context (${latest.relativePath})\n${latest.content.slice(0, 4000)}`
-        );
-      }
       if (cfg.features.skills) {
         const skills = federatedSkills(cfg);
         parts.push(
@@ -199,7 +230,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
       return text(
         annotated
           .map(({ hit: h, note }) => {
-            const warn = flaky.has(h.heading.split("›")[0]?.trim() ?? "") ? " [server cooling down — see hub_health]" : "";
+            const warn = flaky.has(h.heading.split("›")[0]?.trim() ?? "") ? " [server cooling down — see moat_health]" : "";
             return `[${h.score}]${warn}${note} ${h.heading}\n${h.snippet.slice(0, 300)}`;
           })
           .join("\n\n")
@@ -231,7 +262,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     "tool_call",
     {
       description:
-        "Call any tool on any MCP server in the shared registry through the hub gateway — the server is spawned on demand; it does NOT need to be configured in your harness. Flow: tool_search -> tool_describe -> tool_call. Pass `cwd` for servers whose behavior depends on the working directory (e.g. per-project memory like squish). Remote OAuth servers open a browser once on first use, then work for every agent.",
+        "Call any authorized tool in the configured registry. The server starts on demand and does not need a duplicate client-side configuration. Pass `cwd` when server behavior depends on the working directory.",
       inputSchema: {
         server: z.string(),
         tool: z.string(),
@@ -342,10 +373,10 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
   );
 
   server.registerTool(
-    "hub_usage",
+    "moat_usage",
     {
       description:
-        "Per-agent tool-call tracker: which agent (harness) called which tool through the hub, with volume, error rate, latency, and recency. Filter by agent or server; `hours` bounds the window (default 24, by last-call time); `recent` appends the last N raw usage events.",
+        "Per-caller tool-call tracker with volume, error rate, latency, and recency. Filter by caller or server; `hours` bounds the window and `recent` appends raw usage events.",
       inputSchema: {
         agent: z.string().optional(),
         server: z.string().optional(),
@@ -418,7 +449,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
     "mcp_discover",
     {
       description:
-        "Search the awesome-mcp-servers aggregator (~2,800 MCP servers) for a capability the hub doesn't have yet. Returns candidates with repo + run command. To actually use one, tell the human — adoption adds it QUARANTINED and requires `hub trust`.",
+        "Search the configured public MCP catalog for a capability OpenMoat does not have yet. Adoption is human-only, begins quarantined, and requires `moat trust`.",
       inputSchema: { query: z.string(), k: z.number().int().min(1).max(15).optional(), runnableOnly: z.boolean().optional() },
     },
     async ({ query, k, runnableOnly }) => {
@@ -431,7 +462,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
             (h) =>
               `[${h.score}] ${h.name} — ${h.repo}\n  ${h.description}${h.command ? `\n  run: ${h.command}` : "\n  (no run command listed — see repo)"}`
           )
-          .join("\n\n") + `\n\nTo adopt one, ask the human to run: hub discover --add "<name>"`
+          .join("\n\n") + `\n\nTo adopt one, ask the human to run: moat discover --add "<name>"`
       );
     }
   );

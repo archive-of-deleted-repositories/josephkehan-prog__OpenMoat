@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 
 export type DetectionEvidenceKind = "config" | "command" | "application" | "support-directory";
 
@@ -95,9 +95,9 @@ function addEvidence(list: DetectionEvidence[], evidence: DetectionEvidence): vo
 /**
  * Inspect installation signals without parsing or writing any harness file.
  * Existing config files are treated only as presence evidence; adapter-level
- * correctness remains the responsibility of `hub doctor` and `hub sync --dry-run`.
+ * correctness remains the responsibility of `moat doctor` and `moat sync --dry-run`.
  */
-export function detectTargets(cfg: HubConfig, options: DetectionOptions = {}): DetectionReport {
+export function detectTargets(cfg: OpenMoatConfig, options: DetectionOptions = {}): DetectionReport {
   const home = options.home ?? os.homedir();
   const platform = options.platform ?? process.platform;
   const pathEnv = options.pathEnv ?? process.env.PATH ?? "";
@@ -182,10 +182,10 @@ export function renderDetection(report: DetectionReport, includeAll = false): st
   if (visible.length === 0) lines.push("\nNo installed harnesses were detected from configs, commands, or applications.");
   if (report.recommendedTargets.length > 0) {
     lines.push(`\nSuggested after review: ${report.recommendedTargets.join(", ")}`);
-    if (report.configFile) lines.push(`Hub config: ${tildify(report.configFile)}`);
-    lines.push(`Preview selection: hub configure ${report.recommendedTargets.join(" ")}`);
+    if (report.configFile) lines.push(`OpenMoat config: ${tildify(report.configFile)}`);
+    lines.push(`Preview selection: moat configure ${report.recommendedTargets.join(" ")}`);
   }
-  lines.push("Then run: hub doctor && hub sync --dry-run");
-  lines.push("Run `hub detect --all` to include targets with no installation evidence.");
+  lines.push("Then run: moat doctor && moat sync --dry-run");
+  lines.push("Run `moat detect --all` to include targets with no installation evidence.");
   return lines.join("\n");
 }

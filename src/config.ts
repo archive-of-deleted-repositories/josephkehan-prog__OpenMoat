@@ -113,7 +113,7 @@ export interface FederationConfig {
   sources?: FederationSourceConfig[];
 }
 
-export interface HubConfig {
+export interface OpenMoatConfig {
   features: FeatureFlags;
   configFile: string;
   registry: string;
@@ -272,7 +272,7 @@ function validateGatewaySemantics(document: MoatfileDocument): void {
   }
 }
 
-function normalizeMoatfile(document: MoatfileDocument, file: string): HubConfig {
+function normalizeMoatfile(document: MoatfileDocument, file: string): OpenMoatConfig {
   const base = path.dirname(file);
   const stateHome =
     process.env.XDG_STATE_HOME ?? path.join(os.homedir(), ".local", "state");
@@ -335,10 +335,10 @@ function normalizeMoatfile(document: MoatfileDocument, file: string): HubConfig 
   };
 }
 
-function normalizeLegacy(raw: HubConfig, file: string): HubConfig {
+function normalizeLegacy(raw: OpenMoatConfig, file: string): OpenMoatConfig {
   const base = path.dirname(file);
   const absolute = (value: string) => absoluteFrom(base, value);
-  const normalized: HubConfig = {
+  const normalized: OpenMoatConfig = {
     ...raw,
     features: raw.features ?? FEATURE_DEFAULTS,
     configFile: file,
@@ -372,19 +372,19 @@ function normalizeLegacy(raw: HubConfig, file: string): HubConfig {
   return normalized;
 }
 
-export function skillRoots(config: HubConfig): string[] {
+export function skillRoots(config: OpenMoatConfig): string[] {
   return [config.skillsDir, ...(config.extraSkillsDirs ?? [])];
 }
 
-export function loadConfig(root?: string): HubConfig {
+export function loadConfig(root?: string): OpenMoatConfig {
   return loadConfigFile(configFile(root));
 }
 
-export function loadConfigFile(input: string): HubConfig {
+export function loadConfigFile(input: string): OpenMoatConfig {
   const file = path.resolve(expandHome(input));
   const source = fs.readFileSync(file, "utf8");
   if (path.extname(file).toLowerCase() === ".json") {
-    return normalizeLegacy(JSON.parse(source) as HubConfig, file);
+    return normalizeLegacy(JSON.parse(source) as OpenMoatConfig, file);
   }
   let document: unknown;
   try {

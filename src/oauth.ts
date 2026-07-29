@@ -1,9 +1,9 @@
 /**
- * Hub-side OAuth for remote MCP servers (mcp-hub / Docker-gateway pattern):
+ * OpenMoat-side OAuth for remote MCP servers:
  * authorization-code + PKCE, tokens persisted per server under state/oauth/.
  * First gateway call to an OAuth server opens the browser once; afterwards
  * tokens refresh silently. Non-interactive contexts (catalog indexing) throw
- * a clear "run `hub auth <name>`" error instead of opening a browser.
+ * a clear "run `moat auth <name>`" error instead of opening a browser.
  */
 
 import { spawn } from "node:child_process";
@@ -19,9 +19,9 @@ import type {
 } from "@modelcontextprotocol/client";
 
 // One callback port per machine is a real constraint (DCR registrations pin
-// the redirect_uri), but it must at least be configurable so two hub setups
-// can coexist: HUB_OAUTH_PORT overrides.
-const PORT = Number(process.env.HUB_OAUTH_PORT) || 8090;
+// the redirect_uri), but it must at least be configurable so two OpenMoat setups
+// can coexist: OPENMOAT_OAUTH_PORT overrides.
+const PORT = Number(process.env.OPENMOAT_OAUTH_PORT) || 8090;
 
 /** Open a URL in the default browser, cross-platform, without ever throwing —
  *  auth must still be completable by pasting the printed URL. */

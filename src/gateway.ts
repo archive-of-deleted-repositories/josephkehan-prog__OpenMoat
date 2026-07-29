@@ -3,7 +3,7 @@ import path from "node:path";
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import { Client } from "@modelcontextprotocol/client";
 import type { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import {
   resolveFederatedServer,
   type FederatedAsset,
@@ -25,7 +25,7 @@ import {
   type ResolvedServer,
   type ServerDef,
 } from "./registry.js";
-import { HUB_VERSION } from "./version.js";
+import { OPENMOAT_VERSION } from "./version.js";
 
 interface PoolEntry {
   client: Client;
@@ -147,7 +147,7 @@ export interface GatewayHealth {
   >;
 }
 
-export function gatewayHealth(cfg: HubConfig): GatewayHealth {
+export function gatewayHealth(cfg: OpenMoatConfig): GatewayHealth {
   reapIdle(cfg);
   const stats = getHealth(cfg).serverStats();
   const names = new Set([
@@ -197,7 +197,7 @@ export function gatewayHealth(cfg: HubConfig): GatewayHealth {
   };
 }
 
-function reservePool(cfg: HubConfig, serverId: string, poolKey: string): void {
+function reservePool(cfg: OpenMoatConfig, serverId: string, poolKey: string): void {
   if (reservations.has(poolKey)) return;
   const perServer = [...reservations.values()].filter(
     (value) => value === serverId
@@ -215,7 +215,7 @@ function reservePool(cfg: HubConfig, serverId: string, poolKey: string): void {
   reservations.set(poolKey, serverId);
 }
 
-function reapIdle(cfg: HubConfig): void {
+function reapIdle(cfg: OpenMoatConfig): void {
   const now = Date.now();
   for (const [key, entry] of pool) {
     if (now - entry.lastUsed >= cfg.gatewayLimits.idleTimeoutMs) evict(key);
@@ -223,7 +223,7 @@ function reapIdle(cfg: HubConfig): void {
 }
 
 function resolveTarget(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   serverName: string,
   requestedCwd?: string
 ): RuntimeTarget {
@@ -285,7 +285,7 @@ function entryAlive(entry: PoolEntry): boolean {
 }
 
 async function getEntry(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   serverName: string,
   requestedCwd?: string
 ): Promise<PoolEntry> {
@@ -312,7 +312,7 @@ async function getEntry(
 }
 
 /** Prewarm is best-effort and never exposes secret-bearing errors. */
-export function prewarm(cfg: HubConfig, servers: string[]): void {
+export function prewarm(cfg: OpenMoatConfig, servers: string[]): void {
   for (const name of servers) {
     getEntry(cfg, name).catch(() =>
       console.error(`openmoat: prewarm '${name}' failed`)
@@ -323,7 +323,7 @@ export function prewarm(cfg: HubConfig, servers: string[]): void {
 const binAvailable = new Map<string, boolean>();
 
 async function connectHttp(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   target: RuntimeTarget,
   client: Client,
   serverName: string
@@ -357,7 +357,7 @@ async function connectHttp(
       provider.closeCallbackServer();
       client = new Client({
         name: "openmoat-gateway",
-        version: HUB_VERSION,
+        version: OPENMOAT_VERSION,
       });
       transport = makeTransport(server, {
         authProvider: provider,
@@ -379,7 +379,7 @@ async function connectHttp(
 }
 
 async function spawnClient(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   target: RuntimeTarget,
   serverName: string
 ): Promise<PoolEntry> {
@@ -420,7 +420,7 @@ async function spawnClient(
 
   let client = new Client({
     name: "openmoat-gateway",
-    version: HUB_VERSION,
+    version: OPENMOAT_VERSION,
   });
   let pid: number | undefined;
   try {
@@ -477,7 +477,7 @@ async function spawnClient(
 }
 
 function authorize(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   serverName: string,
   toolName: string,
   agent?: string
@@ -499,7 +499,7 @@ function authorize(
 }
 
 export async function gatewayDescribe(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   serverName: string,
   toolName?: string,
   agent?: string
@@ -540,7 +540,7 @@ export interface GatewayResult {
 }
 
 export async function gatewayCall(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   serverName: string,
   toolName: string,
   args: Record<string, unknown>,

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/client";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import {
   getFederationSnapshot,
   requireFederationReady,
@@ -10,7 +10,7 @@ import { makeTransport } from "./mcp-client.js";
 import { FileOAuthProvider } from "./oauth.js";
 import { loadSecrets, resolveServers, type ResolvedServer } from "./registry.js";
 import { sanitizeMetadata, SecretRedactor } from "./runtime-security.js";
-import { HUB_VERSION } from "./version.js";
+import { OPENMOAT_VERSION } from "./version.js";
 
 /**
  * Turn MCP itself into RAG material:
@@ -41,14 +41,14 @@ async function withTimeout<T>(p: Promise<T>, what: string): Promise<T> {
   }
 }
 
-export function catalogDirs(cfg: HubConfig): { toolsDir: string; ingestDir: string } {
+export function catalogDirs(cfg: OpenMoatConfig): { toolsDir: string; ingestDir: string } {
   return {
     toolsDir: path.join(cfg.stateDir, "mcp-tools"),
     ingestDir: path.join(cfg.stateDir, "mcp-ingest"),
   };
 }
 
-export async function refreshMcpCatalog(cfg: HubConfig): Promise<string[]> {
+export async function refreshMcpCatalog(cfg: OpenMoatConfig): Promise<string[]> {
   const snapshot = getFederationSnapshot(cfg, true);
   requireFederationReady(cfg, snapshot);
   const definitions = snapshot.servers.map((asset) => ({
@@ -88,7 +88,7 @@ export async function refreshMcpCatalog(cfg: HubConfig): Promise<string[]> {
 }
 
 async function catalogOne(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   s: ResolvedServer,
   toolsDir: string,
   ingestDir: string,
@@ -103,13 +103,13 @@ async function catalogOne(
   {
     if (s.name === "openmoat") return notes; // don't spawn ourselves
     if (s.trusted === false) {
-      notes.push(`${s.name}: QUARANTINED — not spawned for cataloging until \`hub trust ${s.name}\``);
+      notes.push(`${s.name}: QUARANTINED — not spawned for cataloging until \`moat trust ${s.name}\``);
       return notes;
     }
-    const client = new Client({ name: "openmoat-indexer", version: HUB_VERSION });
+    const client = new Client({ name: "openmoat-indexer", version: OPENMOAT_VERSION });
     try {
       // non-interactive OAuth provider: cached tokens work, otherwise a clear
-      // "run hub auth <name>" note instead of popping a browser mid-index
+      // "run moat auth <name>" note instead of popping a browser mid-index
       const authProvider = s.transport === "http" ? new FileOAuthProvider(cfg.stateDir, s.name, false) : undefined;
       await withTimeout(client.connect(makeTransport(s, { authProvider })), `connect ${s.name}`);
 

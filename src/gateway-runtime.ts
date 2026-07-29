@@ -1,4 +1,4 @@
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import {
   gatewayCall,
   gatewayDescribe,
@@ -34,7 +34,7 @@ export interface GatewayRuntime {
   close(): { server: string; pids: number[] }[];
 }
 
-export function createGatewayRuntime(cfg: HubConfig): GatewayRuntime {
+export function createGatewayRuntime(cfg: OpenMoatConfig): GatewayRuntime {
   return {
     describe: (server, tool, caller) =>
       gatewayDescribe(cfg, server, tool, caller),

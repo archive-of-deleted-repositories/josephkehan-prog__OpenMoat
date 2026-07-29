@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 
 /**
  * ECC-style instincts (everything-claude-code Continuous Learning v2 pattern):
@@ -49,7 +49,7 @@ export function truncateAtWord(s: string, max: number): string {
 }
 
 /** Sanitize agent-supplied text before it can be templated into a rule that
- *  `hub sync` publishes into AGENTS.md. Published rules must read as DATA
+ *  `moat sync` publishes into AGENTS.md. Published rules must read as DATA
  *  (a task description), never as an instruction to future agents: strip
  *  markup that could break out of the list item, quote characters that could
  *  escape the template, and leading imperative framing. */
@@ -63,11 +63,11 @@ export function sanitizeObservation(s: string): string {
 }
 
 /** Count of free-slug self-report instincts (id `self-report:*`). */
-export function freeSelfReportCount(cfg: HubConfig): number {
+export function freeSelfReportCount(cfg: OpenMoatConfig): number {
   return loadInstincts(cfg).filter((i) => i.id.startsWith("self-report:")).length;
 }
 
-export function isAtFreeSelfReportCap(cfg: HubConfig, id: string): boolean {
+export function isAtFreeSelfReportCap(cfg: OpenMoatConfig, id: string): boolean {
   if (!id.startsWith("self-report:")) return false;
   if (loadInstincts(cfg).some((i) => i.id === id)) return false; // reinforcing existing is fine
   return freeSelfReportCount(cfg) >= MAX_FREE_SELF_REPORTS;
@@ -76,7 +76,7 @@ export function isAtFreeSelfReportCap(cfg: HubConfig, id: string): boolean {
 /** Prevent one agent from manufacturing publication confidence by repeating
  * the same report. Independent agents, or the same agent after the review
  * window, may reinforce it. */
-export function hasRecentSelfReport(cfg: HubConfig, id: string, agent: string, withinMs = 24 * 3600_000): boolean {
+export function hasRecentSelfReport(cfg: OpenMoatConfig, id: string, agent: string, withinMs = 24 * 3600_000): boolean {
   const cutoff = Date.now() - withinMs;
   const instinct = loadInstincts(cfg).find((i) => i.id === id);
   return (
@@ -86,11 +86,11 @@ export function hasRecentSelfReport(cfg: HubConfig, id: string, agent: string, w
   );
 }
 
-function file(cfg: HubConfig): string {
+function file(cfg: OpenMoatConfig): string {
   return path.join(cfg.stateDir, "instincts.json");
 }
 
-export function loadInstincts(cfg: HubConfig): Instinct[] {
+export function loadInstincts(cfg: OpenMoatConfig): Instinct[] {
   const f = file(cfg);
   if (!fs.existsSync(f)) return [];
   try {
@@ -101,14 +101,14 @@ export function loadInstincts(cfg: HubConfig): Instinct[] {
   }
 }
 
-export function saveInstincts(cfg: HubConfig, instincts: Instinct[]): void {
+export function saveInstincts(cfg: OpenMoatConfig, instincts: Instinct[]): void {
   fs.mkdirSync(cfg.stateDir, { recursive: true });
   fs.writeFileSync(file(cfg), JSON.stringify(instincts, null, 2), "utf8");
 }
 
 /** Create or reinforce an instinct. Returns the updated instinct. */
 export function reinforceInstinct(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   input: { id: string; rule: string; category: string; evidence: Evidence }
 ): Instinct {
   const all = loadInstincts(cfg);
@@ -137,7 +137,7 @@ export function reinforceInstinct(
 }
 
 /** Decay instincts not in `reinforcedIds`, prune the dead. Returns pruned rules. */
-export function decayAndPrune(cfg: HubConfig, reinforcedIds: Set<string>): string[] {
+export function decayAndPrune(cfg: OpenMoatConfig, reinforcedIds: Set<string>): string[] {
   const all = loadInstincts(cfg);
   const pruned: string[] = [];
   const kept = all.filter((i) => {
@@ -153,7 +153,7 @@ export function decayAndPrune(cfg: HubConfig, reinforcedIds: Set<string>): strin
 }
 
 /** Instincts strong enough to render into the synced gateway block. */
-export function promotedInstincts(cfg: HubConfig, max = 10): Instinct[] {
+export function promotedInstincts(cfg: OpenMoatConfig, max = 10): Instinct[] {
   return loadInstincts(cfg)
     .filter((i) => i.confidence >= PROMOTE_AT)
     .sort((a, b) => b.confidence - a.confidence)
@@ -163,7 +163,7 @@ export function promotedInstincts(cfg: HubConfig, max = 10): Instinct[] {
 /** ECC-style instinct pack: portable export/import for sharing learned rules
  *  across machines (or with other people's hubs). Import merges by id,
  *  keeping the higher confidence and unioning evidence. */
-export function exportPack(cfg: HubConfig): string {
+export function exportPack(cfg: OpenMoatConfig): string {
   return JSON.stringify(
     {
       format: "openmoat-instinct-pack",
@@ -176,7 +176,7 @@ export function exportPack(cfg: HubConfig): string {
   );
 }
 
-export function importPack(cfg: HubConfig, json: string): { added: number; merged: number } {
+export function importPack(cfg: OpenMoatConfig, json: string): { added: number; merged: number } {
   const pack = JSON.parse(json) as { format?: string; instincts?: Instinct[] };
   if (pack.format !== "openmoat-instinct-pack" || !Array.isArray(pack.instincts)) {
     throw new Error("not an openmoat instinct pack");
@@ -208,7 +208,7 @@ const USAGE_ROTATE_BYTES = 10 * 1024 * 1024;
 /** Append a usage event (tool_search/tool_call/…) for later analysis.
  *  Async (never blocks the tool-call hot path) and rotated at 10MB (one
  *  generation kept as usage.jsonl.1) so the file can't grow forever. */
-export function logUsage(cfg: HubConfig, event: Record<string, unknown>): void {
+export function logUsage(cfg: OpenMoatConfig, event: Record<string, unknown>): void {
   const file = path.join(cfg.stateDir, "usage.jsonl");
   const line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n";
   void (async () => {

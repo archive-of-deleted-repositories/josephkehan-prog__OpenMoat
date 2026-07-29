@@ -2,9 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 export interface ManagedState {
-  /** target id -> server names the hub wrote there */
+  /** target id -> server names the OpenMoat wrote there */
   servers: Record<string, string[]>;
-  /** target id -> absolute symlink paths the hub created for that target */
+  /** target id -> absolute symlink paths the OpenMoat created for that target */
   skillLinks: Record<string, string[]>;
 }
 
@@ -26,7 +26,7 @@ export function loadState(stateDir: string, options: LoadStateOptions = {}): Man
     return raw;
   } catch (e) {
     // A later saveState overwrites this file — preserve the original so a
-    // corrupt read never silently destroys the record of what the hub manages.
+    // corrupt read never silently destroys the record of what the OpenMoat manages.
     if (options.preserveCorrupt ?? true) {
       try {
         fs.copyFileSync(p, `${p}.corrupt-${Date.now()}`);

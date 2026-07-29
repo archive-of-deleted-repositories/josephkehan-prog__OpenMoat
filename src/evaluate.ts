@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Archive } from "./archive.js";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import { decayAndPrune, reinforceInstinct, sanitizeObservation, truncateAtWord } from "./instincts.js";
 import { catalogDirs } from "./mcp-rag.js";
 import { Rag } from "./rag.js";
@@ -12,7 +12,7 @@ import { Rag } from "./rag.js";
  * moments where an agent said "I don't have that tool" or fell back to
  * generic web/bash while the catalog had a specialist. Confirmed misses
  * reinforce instincts (ECC-style); stale instincts decay; promoted instincts
- * are rendered into AGENTS.md by `hub sync`.
+ * are rendered into AGENTS.md by `moat sync`.
  *
  * v1 scans Claude Code transcripts (~/.claude/projects/**.jsonl).
  */
@@ -79,7 +79,7 @@ function parseSession(file: string): TranscriptEvent[] {
 }
 
 export async function evaluate(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   opts: { days?: number; tune?: boolean } = {}
 ): Promise<{ report: string; misses: Miss[]; reinforced: string[]; pruned: string[] }> {
   const days = opts.days ?? 3;
@@ -179,7 +179,7 @@ export async function evaluate(
   const lines = [
     `# Gateway self-evaluation — ${new Date().toISOString().slice(0, 16)}`,
     ``,
-    `Scanned ${sessions} session(s) from the last ${days} day(s); ${sessionsUsingHub} used the hub.`,
+    `Scanned ${sessions} session(s) from the last ${days} day(s); ${sessionsUsingHub} used the OpenMoat.`,
     `Confirmed misses (catalog had a specialist, score >= 0.7): ${confirmed.length}`,
     ``,
     ...confirmed.map(
@@ -190,7 +190,7 @@ export async function evaluate(
     reinforced.length ? `Reinforced instincts: ${reinforced.join("; ")}` : `No instincts reinforced.`,
     pruned.length ? `Pruned stale instincts: ${pruned.join("; ")}` : ``,
     ``,
-    `Run \`hub sync\` to publish promoted instincts (confidence >= 0.5) into AGENTS.md.`,
+    `Run \`moat sync\` to publish promoted instincts (confidence >= 0.5) into AGENTS.md.`,
   ];
   // housekeeping: expire old archived tool results
   try {
@@ -213,7 +213,7 @@ export async function evaluate(
   try {
     const { adopt } = await import("./adopt.js");
     const adopted = adopt(cfg, false).filter((l) => l.startsWith("adopted"));
-    if (adopted.length) lines.push("", "Registry drift adopted (quarantined until `hub trust`):", ...adopted.map((l) => `- ${l}`));
+    if (adopted.length) lines.push("", "Registry drift adopted (quarantined until `moat trust`):", ...adopted.map((l) => `- ${l}`));
   } catch {
     /* non-fatal */
   }

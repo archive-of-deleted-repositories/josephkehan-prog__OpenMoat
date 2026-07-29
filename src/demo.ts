@@ -33,7 +33,7 @@ function requireDemo(condition: unknown, message: string): asserts condition {
 }
 
 /**
- * Exercise the installed Hub's real federation and adapter pipeline without
+ * Exercise the installed OpenMoat's real federation and adapter pipeline without
  * reading or writing any live harness configuration. When destination is
  * omitted, the complete workspace is removed before this function returns.
  */

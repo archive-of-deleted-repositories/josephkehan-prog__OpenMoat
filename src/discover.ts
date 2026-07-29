@@ -1,6 +1,6 @@
 /**
  * Discovery: turn the punkpeye/awesome-mcp-servers aggregator (~2,800 servers)
- * into a searchable source inside the hub. Idea borrowed from the Aggregators
+ * into a searchable source inside the OpenMoat. Idea borrowed from the Aggregators
  * category peers (forage, a2asearch, MCPDiscovery, ncp): agents/humans search
  * the catalog, and adopt a pick straight into the registry — QUARANTINED, of
  * course. The aggregator's API exposes no run command, so we parse the npx/uvx
@@ -10,7 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 
 const RAW = "https://raw.githubusercontent.com/punkpeye/awesome-mcp-servers/main/README.md";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -24,11 +24,11 @@ export interface Candidate {
   score: number;
 }
 
-function cachePath(cfg: HubConfig): string {
+function cachePath(cfg: OpenMoatConfig): string {
   return path.join(cfg.stateDir, "awesome-mcp.md");
 }
 
-async function corpus(cfg: HubConfig, refresh = false): Promise<string> {
+async function corpus(cfg: OpenMoatConfig, refresh = false): Promise<string> {
   const cache = cachePath(cfg);
   if (!refresh && fs.existsSync(cache) && Date.now() - fs.statSync(cache).mtimeMs < CACHE_TTL_MS) {
     return fs.readFileSync(cache, "utf8");
@@ -63,7 +63,7 @@ function parseLine(line: string): Omit<Candidate, "score"> | null {
 }
 
 export async function discover(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   query: string,
   opts: { k?: number; refresh?: boolean; runnableOnly?: boolean } = {}
 ): Promise<Candidate[]> {

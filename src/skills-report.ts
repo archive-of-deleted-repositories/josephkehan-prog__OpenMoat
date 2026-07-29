@@ -40,10 +40,10 @@ export function renderText(groups: SkillGroup[]): string {
 export function renderMarkdown(groups: SkillGroup[]): string {
   const total = groups.reduce((n, g) => n + g.skills.length, 0);
   const lines = [
-    "# Hub skills catalog",
+    "# OpenMoat skills catalog",
     "",
     `${total} skills across ${groups.length} collections. A skill = a folder with a \`SKILL.md\`;`,
-    "drop one under any registered root and the hub picks it up automatically.",
+    "drop one under any registered root and the OpenMoat picks it up automatically.",
   ];
   for (const g of groups) {
     lines.push("", `## ${g.label} (${g.skills.length})`, "", `Root: \`${g.root}\``, "");
@@ -81,7 +81,7 @@ ${g.skills
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hub skills catalog</title>
+<title>OpenMoat skills catalog</title>
 <style>
   :root { color-scheme: light dark; --fg: #1a1a1a; --muted: #666; --bg: #fff; --card: #f6f6f4; --accent: #7c5cff; }
   @media (prefers-color-scheme: dark) { :root { --fg: #e8e8e8; --muted: #999; --bg: #141414; --card: #1f1f1f; } }
@@ -102,7 +102,7 @@ ${g.skills
 </style>
 </head>
 <body>
-<h1>Hub skills catalog</h1>
+<h1>OpenMoat skills catalog</h1>
 <p class="sub">${total} skills across ${groups.length} collections — served by openmoat <code>skills_list</code> / <code>skill_read</code>. To publish a skill, drop a folder containing <code>SKILL.md</code> under any root below.</p>
 <input id="q" type="search" placeholder="Filter skills… (name or description)" autofocus>
 ${sections}

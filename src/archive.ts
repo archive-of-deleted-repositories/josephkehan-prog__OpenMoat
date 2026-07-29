@@ -7,13 +7,13 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import { openStateDb } from "./db.js";
 
 export class Archive {
   private db: DatabaseSync;
 
-  constructor(cfg: HubConfig) {
+  constructor(cfg: OpenMoatConfig) {
     this.db = openStateDb(
       path.join(cfg.stateDir, "archive.db"),
       "CREATE TABLE IF NOT EXISTS blobs (hash TEXT PRIMARY KEY, content TEXT NOT NULL, bytes INTEGER NOT NULL, created INTEGER NOT NULL)"
@@ -71,7 +71,7 @@ export class Archive {
 }
 
 let cached: Archive | null = null;
-export function getArchive(cfg: HubConfig): Archive {
+export function getArchive(cfg: OpenMoatConfig): Archive {
   if (!cached) cached = new Archive(cfg);
   return cached;
 }

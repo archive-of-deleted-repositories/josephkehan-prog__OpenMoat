@@ -12,7 +12,7 @@ export interface ServerDef {
   headers?: Record<string, string>;
   targets?: string[];
   disabled?: boolean;
-  /** Reachable via the hub gateway (tool_call) but never synced into harness configs. */
+  /** Reachable via the OpenMoat gateway (tool_call) but never synced into harness configs. */
   gatewayOnly?: boolean;
   /** Quarantine: false = not callable until a human runs `moat trust <name>`.
    *  Undefined/true = trusted. */
@@ -21,7 +21,7 @@ export interface ServerDef {
   requires?: { bin: string; hint?: string }[];
   /** Working directory to spawn this server in, when a tool_call supplies none.
    *  Servers that derive per-project state from `process.cwd()` need this —
-   *  without it they run in the hub's own directory and look up a project that
+   *  without it they run in the OpenMoat's own directory and look up a project that
    *  does not exist. A caller-supplied cwd still wins. */
   cwd?: string;
   cwdRoots?: string[];

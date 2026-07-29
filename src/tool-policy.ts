@@ -48,7 +48,7 @@ const EMPTY: ToolPolicy = { prefer: [], disambiguate: [] };
  *
  * `tool_search` runs on essentially every agent turn, and the registry is
  * ~100 KB — re-parsing it per call is pure waste. Keyed on mtimeMs so an edit
- * to the registry takes effect without restarting the hub.
+ * to the registry takes effect without restarting the OpenMoat.
  *
  * A malformed or missing registry yields an empty policy rather than throwing:
  * collision hints are an enhancement, and losing them must never take
@@ -165,7 +165,7 @@ export function applyToolPolicy<T extends RankedHit>(hits: T[], policy: ToolPoli
  * memory instead of running tool_search. All three offenders:
  *
  *   dbx›query          20 calls, 20 errors   (real name: dbx_execute_query)
- *   squish›x           20 calls, 20 errors   (no such tool)
+ *   project-memory server›x           20 calls, 20 errors   (no such tool)
  *   brave-search›search 2 calls,  2 errors   (real name: brave_web_search)
  *
  * `gatewayCall` passed the downstream "Tool query not found" straight through,

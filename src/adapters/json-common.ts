@@ -14,7 +14,7 @@ export function syncJsonMcpServers(
   ctx: AdapterCtx
 ): AdapterResult {
   const notes: string[] = [];
-  // Never manufacture a config for a tool that isn't installed — a hub-created
+  // Never manufacture a config for a tool that isn't installed — a OpenMoat-created
   // file would preempt the tool's own first-run setup. Sync again after install.
   if (!fs.existsSync(ctx.configPath)) {
     return { changed: false, managed: ctx.prevManaged, notes: [`SKIP: ${ctx.configPath} not found (is the tool installed?)`] };

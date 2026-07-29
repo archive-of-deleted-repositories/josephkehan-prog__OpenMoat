@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 /**
- * Open a shared state DB. Every hub process (one per harness) writes the same
+ * Open a shared state DB. Every OpenMoat process (one per harness) writes the same
  * files, so WAL alone is not enough: node:sqlite's default busy timeout is 0,
  * which turns concurrent writes into immediate SQLITE_BUSY throws. busy_timeout
  * makes contending writers queue briefly instead.

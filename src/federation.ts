@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type {
   FederationSourceConfig,
-  HubConfig,
+  OpenMoatConfig,
   PluginStoreConfig,
 } from "./config.js";
 import {
@@ -71,7 +71,7 @@ interface PluginCatalog {
 }
 
 const CACHE_TTL_MS = 30_000;
-const cache = new WeakMap<HubConfig, { at: number; snapshot: FederationSnapshot }>();
+const cache = new WeakMap<OpenMoatConfig, { at: number; snapshot: FederationSnapshot }>();
 
 function normalizeSource(source: FederationSourceConfig): FederationSource {
   return {
@@ -85,7 +85,7 @@ function normalizeSource(source: FederationSourceConfig): FederationSource {
   };
 }
 
-export function federationSources(cfg: HubConfig): FederationSource[] {
+export function federationSources(cfg: OpenMoatConfig): FederationSource[] {
   const sources: FederationSource[] = [];
   if (cfg.federation?.includeLocal !== false) {
     sources.push({
@@ -259,7 +259,7 @@ function readCodexPluginStore(storePath: string): FederatedPlugin[] {
   return out;
 }
 
-export function buildFederationSnapshot(cfg: HubConfig): FederationSnapshot {
+export function buildFederationSnapshot(cfg: OpenMoatConfig): FederationSnapshot {
   const sources = federationSources(cfg);
   const warnings: string[] = [];
   const conflicts: FederationConflict[] = [];
@@ -379,7 +379,7 @@ export function buildFederationSnapshot(cfg: HubConfig): FederationSnapshot {
   };
 }
 
-export function getFederationSnapshot(cfg: HubConfig, fresh = false): FederationSnapshot {
+export function getFederationSnapshot(cfg: OpenMoatConfig, fresh = false): FederationSnapshot {
   const hit = cache.get(cfg);
   if (!fresh && hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.snapshot;
   const snapshot = buildFederationSnapshot(cfg);
@@ -387,11 +387,11 @@ export function getFederationSnapshot(cfg: HubConfig, fresh = false): Federation
   return snapshot;
 }
 
-export function invalidateFederationCache(cfg: HubConfig): void {
+export function invalidateFederationCache(cfg: OpenMoatConfig): void {
   cache.delete(cfg);
 }
 
-export function requireFederationReady(cfg: HubConfig, snapshot: FederationSnapshot): void {
+export function requireFederationReady(cfg: OpenMoatConfig, snapshot: FederationSnapshot): void {
   if ((cfg.federation?.conflictPolicy ?? "error") !== "error" || !snapshot.conflicts.length) return;
   const summary = snapshot.conflicts
     .map((conflict) => `${conflict.kind} '${conflict.name}': ${[conflict.selected, ...conflict.alternatives].join(", ")}`)
@@ -403,19 +403,19 @@ function selected<T>(assets: FederatedAsset<T>[]): FederatedAsset<T>[] {
   return assets.filter((asset) => asset.selected);
 }
 
-export function federatedSkills(cfg: HubConfig, strict = true): FederatedAsset<SkillInfo>[] {
+export function federatedSkills(cfg: OpenMoatConfig, strict = true): FederatedAsset<SkillInfo>[] {
   const snapshot = getFederationSnapshot(cfg);
   if (strict) requireFederationReady(cfg, snapshot);
   return selected(snapshot.skills);
 }
 
-export function federatedServers(cfg: HubConfig, strict = true): FederatedAsset<ServerDef>[] {
+export function federatedServers(cfg: OpenMoatConfig, strict = true): FederatedAsset<ServerDef>[] {
   const snapshot = getFederationSnapshot(cfg);
   if (strict) requireFederationReady(cfg, snapshot);
   return selected(snapshot.servers);
 }
 
-export function federatedPlugins(cfg: HubConfig, strict = true): FederatedAsset<FederatedPlugin>[] {
+export function federatedPlugins(cfg: OpenMoatConfig, strict = true): FederatedAsset<FederatedPlugin>[] {
   const snapshot = getFederationSnapshot(cfg);
   if (strict) requireFederationReady(cfg, snapshot);
   return selected(snapshot.plugins);
@@ -432,7 +432,7 @@ function resolveAsset<T>(
 }
 
 export function resolveFederatedSkill(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   reference: string
 ): FederatedAsset<SkillInfo> | undefined {
   const snapshot = getFederationSnapshot(cfg);
@@ -441,7 +441,7 @@ export function resolveFederatedSkill(
 }
 
 export function resolveFederatedServer(
-  cfg: HubConfig,
+  cfg: OpenMoatConfig,
   reference: string
 ): FederatedAsset<ServerDef> | undefined {
   const snapshot = getFederationSnapshot(cfg);

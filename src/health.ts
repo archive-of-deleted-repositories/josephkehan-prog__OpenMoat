@@ -1,14 +1,14 @@
 /**
  * Circuit breakers + health scoring for gateway children (OmniRoute's layered
- * breaker model, hub edition): server-scope breaker on spawn/connect failures,
+ * breaker model, OpenMoat edition): server-scope breaker on spawn/connect failures,
  * tool-scope lockout on repeated call errors. Lazy half-open recovery — no
  * background timers; after the cooldown the next call is the probe.
- * Persisted in SQLite so every hub process (one per harness) shares state.
+ * Persisted in SQLite so every OpenMoat process (one per harness) shares state.
  */
 
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { HubConfig } from "./config.js";
+import type { OpenMoatConfig } from "./config.js";
 import { openStateDb } from "./db.js";
 
 const THRESHOLD: Record<string, number> = { server: 3, tool: 4 };
@@ -50,7 +50,7 @@ function displayServer(key: string): string {
 export class Health {
   private db: DatabaseSync;
 
-  constructor(cfg: HubConfig) {
+  constructor(cfg: OpenMoatConfig) {
     this.db = openStateDb(path.join(cfg.stateDir, "health.db"), `
       CREATE TABLE IF NOT EXISTS breakers (
         scope TEXT NOT NULL, key TEXT NOT NULL, failures INTEGER NOT NULL DEFAULT 0,
@@ -206,7 +206,7 @@ export class Health {
       total_ms: number;
       last_at: number;
     }[];
-    if (!rows.length) return "No tracked calls match. (Tracking starts when agents call tools through a hub built with agent_calls support.)";
+    if (!rows.length) return "No tracked calls match. (Tracking starts when agents call tools through a OpenMoat built with agent_calls support.)";
 
     const ago = (ts: number) => {
       const m = Math.round((Date.now() - ts) / 60_000);
@@ -269,7 +269,7 @@ export class Health {
 }
 
 let cached: Health | null = null;
-export function getHealth(cfg: HubConfig): Health {
+export function getHealth(cfg: OpenMoatConfig): Health {
   if (!cached) cached = new Health(cfg);
   return cached;
 }

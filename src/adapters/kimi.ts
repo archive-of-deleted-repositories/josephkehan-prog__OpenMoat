@@ -19,6 +19,6 @@ export const kimiCode = jsonMcpAdapter("kimi-code", mapKimi);
  * Kimi desktop (Kimi Work): the embedded kimi-code runtime home at
  * ~/Library/Application Support/kimi-desktop/daimon-share/daimon/runtime/kimi-code/home/mcp.json.
  * Same mcpServers shape as the CLI. The desktop also injects plugin MCPs
- * out-of-band, so only hub-managed native servers are written here.
+ * out-of-band, so only OpenMoat-managed native servers are written here.
  */
 export const kimiDesktop = jsonMcpAdapter("kimi", mapKimi);
