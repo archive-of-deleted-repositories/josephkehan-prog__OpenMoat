@@ -32,6 +32,13 @@ negotiation uses a disposable probe sibling; its helper descendant was outside
 the normal session pool. The process-tree transport wrapper now reaps probe
 descendants before the SDK disposes the sibling root and pipes.
 
+The release red-team review added a third RED checkpoint in signed commits
+`f4f5485`, `4bf9c82`, `559b544`, and `319c248`. The focused suite reproduced
+recursive secret-key disclosure, caller-label namespace collisions,
+cross-caller usage disclosure, oversized structured envelopes, caller-neutral
+archives, permissive state modes, incomplete CI verification, and missing
+gateway/server coverage.
+
 ## GREEN evidence
 
 OpenMoat Spec:
@@ -43,16 +50,20 @@ OpenMoat Spec:
 
 TypeScript reference:
 
-- 87 tests passed, including all five dual-era end-to-end cases.
-- Configured coverage gate passed: 91.46% lines, 81.88% branches, and 94.23%
-  functions.
+- 97 tests passed, including the dual-era and release red-team cases.
+- The established core coverage gate passed at 91.62% lines, 81.59% branches,
+  and 94.17% functions.
+- Gateway/server coverage is now collected separately and enforced at an
+  initial 50% lines, 50% functions, and 25% branches. The verified run measured
+  53.71% lines, 53.13% functions, and 37.04% branches.
 - Official MCP conformance passed 3/3 applicable scenarios.
 - Shared OpenMoat conformance passed 26/26 cases, including reuse, cwd
   isolation, failure recovery, orphan cleanup, shutdown, and signal cleanup.
 - `npm audit` found zero vulnerabilities and Gitleaks found no leaks.
-- `node scripts/verify.mjs` passed.
+- `npm run verify` passed, including provenance and package-content scans.
 - Signed commits: `88b6888` (RED), `3df3ed7` (initial GREEN), and `8454982`
-  (probe-descendant cleanup).
+  (probe-descendant cleanup), plus `d3405ab` (red-team GREEN) and `618398f`
+  (coverage gate).
 
 ## Boundaries
 
