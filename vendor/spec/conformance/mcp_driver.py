@@ -221,6 +221,7 @@ def _moatfile(
     root: Path,
     marker: str,
 ) -> tuple[Path, dict[str, Path]]:
+    root = root.resolve()
     input_value = cast(dict[str, object], case.get("input", {}))
     server_value = dict(
         cast(dict[str, object], input_value.get("server", {}))
