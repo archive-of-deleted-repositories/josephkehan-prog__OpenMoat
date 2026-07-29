@@ -121,6 +121,21 @@ test("secret redaction traverses nested MCP output without mutating the input", 
   assert.doesNotMatch(JSON.stringify(redacted), /secret-value/);
 });
 
+test("secret-bearing key redaction preserves colliding fields without disclosure", () => {
+  const redactor = new SecretRedactor(["secret-value"]);
+
+  const redacted = redactor.redact({
+    "secret-value": "first",
+    "[REDACTED]": "second",
+  });
+
+  assert.deepEqual(redacted, {
+    "[REDACTED]": "first",
+    "[REDACTED]#2": "second",
+  });
+  assert.doesNotMatch(JSON.stringify(redacted), /secret-value/);
+});
+
 test("deadlines reject with a stable timeout code and run cleanup", async () => {
   let cleaned = false;
   await assert.rejects(

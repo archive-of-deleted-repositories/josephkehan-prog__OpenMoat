@@ -32,6 +32,7 @@ test("usage telemetry never persists raw search queries", async () => {
   assert.doesNotMatch(persisted, /private acquisition roadmap/);
   assert.equal(event.query, undefined);
   assert.equal(event.queryLength, 27);
+  assert.equal(fs.statSync(file).mode & 0o077, 0);
 });
 
 test("recent usage events are caller-scoped", () => {
