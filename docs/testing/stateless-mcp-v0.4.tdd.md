@@ -50,12 +50,12 @@ OpenMoat Spec:
 
 TypeScript reference:
 
-- 101 tests passed, including the dual-era and release red-team cases.
+- 102 tests passed, including the dual-era and release red-team cases.
 - The established core coverage gate passed at 91.62% lines, 81.59% branches,
   and 94.17% functions.
-- Gateway/server coverage is now collected separately and enforced at an
-  initial 50% lines, 50% functions, and 25% branches. The verified run measured
-  54.71% lines, 53.13% functions, and 48.31% branches.
+- The stateless gateway suite combines unit, integration, official MCP, and
+  shared conformance runs under an 80% gate. It passed at 81.70% lines, 80.18%
+  branches, and 89.55% functions.
 - Official MCP conformance passed 3/3 applicable scenarios.
 - Shared OpenMoat conformance passed 26/26 cases, including reuse, cwd
   isolation, failure recovery, orphan cleanup, shutdown, and signal cleanup.
@@ -63,8 +63,9 @@ TypeScript reference:
 - `npm run verify` passed, including provenance and package-content scans.
 - Signed commits: `88b6888` (RED), `3df3ed7` (initial GREEN), and `8454982`
   (probe-descendant cleanup), plus `d3405ab` (red-team GREEN) and `618398f`
-  (coverage gate). Commit `adfee51` adds direct server privacy-boundary
-  coverage.
+  (initial coverage gate). Commits `adfee51`, `409a275`, and `75f62a6` add
+  direct server privacy-boundary coverage and enforce the final 80% stateless
+  coverage gate.
 
 ## Boundaries
 
