@@ -1,7 +1,7 @@
 # OpenMoat
 
 OpenMoat is a local-first MCP gateway and shared agent configuration
-reconciler. TypeScript 0.2 is the supported complete implementation.
+reconciler. TypeScript 0.3 is the supported complete implementation.
 
 It extracts the reusable engineering from a private multi-agent setup without
 shipping workstation identity, live configuration, secrets, registries,
@@ -35,7 +35,7 @@ global installation is required.
 Configuration precedence is `--file`, then `OPENMOAT_FILE`, then
 `${XDG_CONFIG_HOME:-~/.config}/openmoat/Moatfile`. The canonical file is
 extensionless YAML with `apiVersion: openmoat.dev/v1`. Project overlays are not
-supported in 0.2.
+supported in 0.3.
 
 All harness targets begin disabled. Review `moat detect`, then explicitly
 enable and apply only the targets you want.
@@ -76,7 +76,7 @@ copies secrets, databases, OAuth tokens, archives, or other runtime state.
 
 ## Status
 
-OpenMoat TypeScript 0.2 is supported. The sibling Rust, Go, and Python
+OpenMoat TypeScript 0.3 is supported. The sibling Rust, Go, and Python
 repositories are experimental gateway-only comparisons and do not implement
 the shared-brain modules.
 
