@@ -2,8 +2,10 @@ import type { HubConfig } from "./config.js";
 import {
   gatewayCall,
   gatewayDescribe,
+  gatewayHealth,
   prewarm,
   reapAll,
+  type GatewayHealth,
   type GatewayResult,
 } from "./gateway.js";
 
@@ -28,6 +30,7 @@ export interface GatewayRuntime {
     caller?: string
   ): Promise<GatewayResult>;
   prewarm(servers: string[]): void;
+  health(): GatewayHealth;
   close(): { server: string; pids: number[] }[];
 }
 
@@ -38,6 +41,7 @@ export function createGatewayRuntime(cfg: HubConfig): GatewayRuntime {
     call: (server, tool, args, cwd, caller) =>
       gatewayCall(cfg, server, tool, args, cwd, caller),
     prewarm: (servers) => prewarm(cfg, servers),
+    health: () => gatewayHealth(cfg),
     close: () => reapAll(),
   };
 }

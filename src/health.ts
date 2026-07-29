@@ -25,6 +25,28 @@ export interface BreakerPolicy {
   resetAfterMs?: number;
 }
 
+export interface ServerHealthStats {
+  latencyMs: number;
+  failures: number;
+  lastErrorCode?: string;
+}
+
+function errorCode(message: string): string {
+  const value = message.toLowerCase();
+  if (value.includes("timeout")) return "TIMEOUT";
+  if (value.includes("circuit")) return "CIRCUIT_OPEN";
+  if (value.includes("quarantin")) return "QUARANTINED";
+  if (value.includes("unauthor") || value.includes("denied")) {
+    return "UNAUTHORIZED";
+  }
+  return "PROCESS_FAILED";
+}
+
+function displayServer(key: string): string {
+  const asset = key.split("@", 1)[0] ?? key;
+  return asset.split("/").at(-1) ?? asset;
+}
+
 export class Health {
   private db: DatabaseSync;
 
@@ -99,6 +121,47 @@ export class Health {
          ON CONFLICT(server, tool) DO UPDATE SET calls = calls + 1, errors = errors + excluded.errors, total_ms = total_ms + excluded.total_ms`
       )
       .run(server, tool, isError ? 1 : 0, Math.round(ms));
+  }
+
+  /** Normalized, secret-free server metrics for the public health contract. */
+  serverStats(): Record<string, ServerHealthStats> {
+    const stats = this.db
+      .prepare(
+        `SELECT server, SUM(calls) AS calls, SUM(errors) AS errors,
+                SUM(total_ms) AS total_ms
+         FROM stats GROUP BY server`
+      )
+      .all() as unknown as {
+      server: string;
+      calls: number;
+      errors: number;
+      total_ms: number;
+    }[];
+    const breakers = this.db
+      .prepare(
+        `SELECT key, failures, last_error
+         FROM breakers WHERE scope = 'server'`
+      )
+      .all() as unknown as {
+      key: string;
+      failures: number;
+      last_error: string;
+    }[];
+    const result: Record<string, ServerHealthStats> = {};
+    for (const row of stats) {
+      result[row.server] = {
+        latencyMs: row.calls ? Math.round(row.total_ms / row.calls) : 0,
+        failures: row.errors,
+      };
+    }
+    for (const row of breakers) {
+      const server = displayServer(row.key);
+      const current = result[server] ?? { latencyMs: 0, failures: 0 };
+      current.failures += row.failures;
+      current.lastErrorCode = errorCode(row.last_error);
+      result[server] = current;
+    }
+    return result;
   }
 
   /** Per-agent attribution: which agent (harness) called which tool. */

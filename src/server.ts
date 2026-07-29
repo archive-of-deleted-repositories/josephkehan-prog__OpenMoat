@@ -338,7 +338,7 @@ Every agent here shares one brain: openmoat (${path.dirname(cfg.registry).replac
         "Gateway health: open circuit breakers (servers cooling down, tools locked out) and per-tool call stats (volume, error rate, latency). Check when a tool_call fails or feels slow.",
       inputSchema: {},
     },
-    async () => text(getHealth(cfg).report())
+    async () => text(JSON.stringify(gatewayRuntime.health()))
   );
 
   server.registerTool(

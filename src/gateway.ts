@@ -30,6 +30,7 @@ import { HUB_VERSION } from "./version.js";
 interface PoolEntry {
   client: Client;
   serverId: string;
+  serverName: string;
   cwd?: string;
   pid?: number;
   lastUsed: number;
@@ -79,9 +80,13 @@ function descendants(pid: number): number[] {
 }
 
 function killEntry(entry: PoolEntry): number[] {
+  if (entry.pid === undefined) return [];
+  return killProcessTree(entry.pid);
+}
+
+function killProcessTree(rootPid: number): number[] {
   const killed: number[] = [];
-  if (entry.pid === undefined) return killed;
-  for (const pid of [...descendants(entry.pid), entry.pid].reverse()) {
+  for (const pid of [...descendants(rootPid).reverse(), rootPid]) {
     try {
       process.kill(pid, "SIGKILL");
       killed.push(pid);
@@ -122,6 +127,74 @@ export function reapAll(): { server: string; pids: number[] }[] {
   reservations.clear();
   activeCalls.clear();
   return reaped;
+}
+
+export interface GatewayHealth {
+  version: 1;
+  status: "ok" | "degraded" | "failed";
+  pools: number;
+  poolLimit: number;
+  queuedCalls: number;
+  servers: Record<
+    string,
+    {
+      status: "cold" | "starting" | "ready" | "open" | "failed" | "stopped";
+      latencyMs: number;
+      failures: number;
+      children: number;
+      lastErrorCode?: string;
+    }
+  >;
+}
+
+export function gatewayHealth(cfg: HubConfig): GatewayHealth {
+  reapIdle(cfg);
+  const stats = getHealth(cfg).serverStats();
+  const names = new Set([
+    ...cfg.inlineServers.map((server) => server.name),
+    ...Object.keys(stats),
+    ...[...pool.values()].map((entry) => entry.serverName),
+  ]);
+  const servers: GatewayHealth["servers"] = {};
+  for (const name of [...names].sort()) {
+    const entries = [...pool.values()].filter(
+      (entry) => entry.serverName === name && entryAlive(entry)
+    );
+    const metric = stats[name] ?? { latencyMs: 0, failures: 0 };
+    const children = entries.reduce(
+      (count, entry) =>
+        count +
+        (entry.pid === undefined ? 0 : 1 + descendants(entry.pid).length),
+      0
+    );
+    servers[name] = {
+      status:
+        entries.length > 0
+          ? "ready"
+          : metric.failures > 0
+            ? "failed"
+            : inflight.size > 0
+              ? "starting"
+              : "cold",
+      latencyMs: metric.latencyMs,
+      failures: metric.failures,
+      children,
+      ...(metric.lastErrorCode
+        ? { lastErrorCode: metric.lastErrorCode }
+        : {}),
+    };
+  }
+  const degraded = Object.values(servers).some(
+    (server) => server.status === "failed" || server.status === "open"
+  );
+  return {
+    version: 1,
+    status: degraded ? "degraded" : "ok",
+    pools: pool.size,
+    poolLimit: cfg.gatewayLimits.maxPools,
+    queuedCalls: inflight.size,
+    servers,
+  };
 }
 
 function reservePool(cfg: HubConfig, serverId: string, poolKey: string): void {
@@ -358,7 +431,15 @@ async function spawnClient(
       await withDeadline(
         client.connect(transport),
         server.startupTimeoutMs ?? 10_000,
-        () => transport.close()
+        async () => {
+          if (
+            "pid" in transport &&
+            typeof transport.pid === "number"
+          ) {
+            killProcessTree(transport.pid);
+          }
+          await transport.close();
+        }
       );
       pid =
         "pid" in transport && typeof transport.pid === "number"
@@ -381,6 +462,7 @@ async function spawnClient(
   const entry: PoolEntry = {
     client,
     serverId: target.asset.id,
+    serverName,
     cwd: target.cwd,
     pid,
     lastUsed: Date.now(),
