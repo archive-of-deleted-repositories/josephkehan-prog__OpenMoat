@@ -60,4 +60,7 @@ const packedFiles = payload[0].files.map((entry) => entry.path);
 if (packedFiles.some((file) => /(?:^|\/)(?:state|secrets\.env|\.env)(?:\/|$)/.test(file))) {
   throw new Error("package contains runtime state or secrets");
 }
+if (packedFiles.some((file) => /(?:^|\/)__pycache__\/|\.pyc$/u.test(file))) {
+  throw new Error("package contains generated Python bytecode");
+}
 console.log(`package inspection: ${packedFiles.length} files`);
