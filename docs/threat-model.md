@@ -26,6 +26,7 @@ boundary and can impersonate policy labels.
 | Command or argument injection | direct argv spawn; shell-free browser launch; bounded schema fields | configuration and browser-command tests |
 | Secret leakage | minimal child env, runtime placeholder resolution, recursive value/key redaction, coarse diagnostics | redaction and protocol-envelope tests |
 | Credential-bearing or oversized configuration | reject URL userinfo; cap Moatfile and secrets files at 1 MiB | configuration boundary tests |
+| Redirect-based SSRF | manually follow at most five redirects; reject cross-origin or credential-bearing locations for MCP and OAuth fetches | two-origin HTTP attack fixture |
 | OAuth callback/state/issuer confusion | random one-time state, loopback callback, PKCE, hashed filenames, per-issuer credential maps, bounded port | state/liveness tests and controlled-issuer release probe |
 | Oversized or adversarial result | depth, entry, byte, paging, owner quota, entry quota, TTL | archive and envelope tests |
 | Pool, timeout, breaker exhaustion | global/per-server pool limits, per-server concurrency, deadlines, idle reap, persisted breakers | runtime and health tests |

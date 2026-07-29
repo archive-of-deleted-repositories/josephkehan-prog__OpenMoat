@@ -17,6 +17,8 @@ Supported security fixes target the latest v1 release.
   roots; symlink escapes fail.
 - `moat init --force` refuses symbolic links at every managed destination.
 - Non-loopback HTTP requires HTTPS; HTTP URLs cannot embed credentials.
+- HTTP and OAuth fetches follow at most five redirects and refuse any redirect
+  that changes origin or introduces URL credentials.
 - Moatfile and secrets inputs are each limited to 1 MiB.
 - `${ENV}` placeholders resolve at runtime and unresolved values fail closed.
 - Tool metadata uses the MCP 128-character identifier grammar, is capped at 128

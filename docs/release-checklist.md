@@ -35,6 +35,7 @@ checklist. Those are separate maintainer actions.
 - [ ] hostile tool descriptions cannot forge catalog entries
 - [ ] tool-description output is capped at 128 valid MCP tool identifiers
 - [ ] browser launch never passes authorization URLs through a shell
+- [ ] MCP and OAuth HTTP fetches reject cross-origin redirect pivots
 - [ ] pool, timeout, breaker, and cleanup behavior passes
 - [ ] interactive OAuth callback completes against a controlled test issuer
 - [ ] OAuth cancellation/timeout closes the callback listener

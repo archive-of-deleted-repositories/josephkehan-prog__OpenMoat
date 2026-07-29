@@ -53,6 +53,89 @@ export function cleanEnv(
   return buildChildEnv(extra, inheritEnv, source);
 }
 
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_SAME_ORIGIN_REDIRECTS = 5;
+
+/**
+ * Follow only bounded same-origin redirects. Native fetch follows redirects
+ * automatically, which would let a configured remote endpoint pivot a request
+ * toward a different host or a loopback/internal service.
+ */
+export function sameOriginFetch(
+  _endpoint?: URL,
+  baseFetch: typeof fetch = fetch
+): typeof fetch {
+  return (async (
+    input: string | URL | Request,
+    init: RequestInit = {}
+  ): Promise<Response> => {
+    let current = new URL(
+      input instanceof Request ? input.url : String(input)
+    );
+    const origin = current.origin;
+    let method = (
+      init.method ??
+      (input instanceof Request ? input.method : "GET")
+    ).toUpperCase();
+    let body =
+      init.body ??
+      (input instanceof Request &&
+      method !== "GET" &&
+      method !== "HEAD"
+        ? input.body
+        : undefined);
+    const headers = new Headers(
+      init.headers ??
+        (input instanceof Request ? input.headers : undefined)
+    );
+
+    for (
+      let redirects = 0;
+      redirects <= MAX_SAME_ORIGIN_REDIRECTS;
+      redirects++
+    ) {
+      const response = await baseFetch(current, {
+        ...init,
+        method,
+        headers,
+        body,
+        redirect: "manual",
+      });
+      if (!REDIRECT_STATUSES.has(response.status)) return response;
+
+      const location = response.headers.get("location");
+      if (!location) return response;
+      const next = new URL(location, current);
+      if (
+        next.origin !== origin ||
+        next.username ||
+        next.password
+      ) {
+        throw new Error(
+          `HTTP_REDIRECT_BLOCKED: refused redirect from '${origin}' to '${next.origin}'`
+        );
+      }
+      if (redirects === MAX_SAME_ORIGIN_REDIRECTS) {
+        throw new Error(
+          `HTTP_REDIRECT_BLOCKED: exceeded ${MAX_SAME_ORIGIN_REDIRECTS} same-origin redirects`
+        );
+      }
+      if (
+        response.status === 303 ||
+        ((response.status === 301 || response.status === 302) &&
+          method === "POST")
+      ) {
+        method = "GET";
+        body = undefined;
+        headers.delete("content-length");
+        headers.delete("content-type");
+      }
+      current = next;
+    }
+    throw new Error("HTTP_REDIRECT_BLOCKED: unreachable redirect state");
+  }) as typeof fetch;
+}
+
 /** Build a client transport for any registry server (stdio or streamable-http). */
 export function makeTransport(
   s: ResolvedServer,
@@ -62,6 +145,7 @@ export function makeTransport(
     if (!s.url) throw new Error(`'${s.name}' is http but has no url`);
     return new StreamableHTTPClientTransport(new URL(s.url), {
       authProvider: opts.authProvider,
+      fetch: sameOriginFetch(new URL(s.url)),
       requestInit: s.headers ? { headers: s.headers } : undefined,
     });
   }
