@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import {
   catalogFile,
   loadCatalog,
@@ -172,12 +174,15 @@ test("OAuth state is random, enforced once, and closes the callback listener", a
         `http://issuer.invalid/authorize?state=${encodeURIComponent(activeState)}`
       )
     );
-    const mismatch = provider.waitForCode(1_000);
+    const mismatch = assert.rejects(
+      provider.waitForCode(1_000),
+      /state mismatch/
+    );
     const mismatchResponse = await fetch(
       `http://127.0.0.1:${firstPort}/callback?code=attacker&state=wrong`
     );
     assert.equal(mismatchResponse.status, 400);
-    await assert.rejects(mismatch, /state mismatch/);
+    await mismatch;
     await assert.rejects(
       fetch(`http://127.0.0.1:${firstPort}/callback`),
       /fetch failed/
@@ -207,5 +212,69 @@ test("OAuth state is random, enforced once, and closes the callback listener", a
     fs.rmSync(root, { recursive: true, force: true });
     if (previous === undefined) delete process.env.OPENMOAT_OAUTH_PORT;
     else process.env.OPENMOAT_OAUTH_PORT = previous;
+  }
+});
+
+test("interactive OAuth keeps its process alive until a terminal callback", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "openmoat-oauth-liveness-"));
+  const port = await unusedPort();
+  const moduleUrl = pathToFileURL(
+    path.resolve(import.meta.dirname, "../dist/oauth.js")
+  ).href;
+  const script = `
+    import { FileOAuthProvider } from ${JSON.stringify(moduleUrl)};
+    process.env.OPENMOAT_OAUTH_PORT = ${JSON.stringify(String(port))};
+    const provider = new FileOAuthProvider(
+      ${JSON.stringify(root)},
+      "remote",
+      true,
+      () => {}
+    );
+    const state = provider.state();
+    await provider.redirectToAuthorization(
+      new URL("http://issuer.invalid/authorize?state=" + state)
+    );
+    console.log("READY " + state);
+  `;
+  const child = spawn(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { stdio: ["ignore", "pipe", "pipe"] }
+  );
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk;
+  });
+  try {
+    const state = await new Promise((resolve, reject) => {
+      child.stdout.on("data", (chunk) => {
+        const match = String(chunk).match(/READY ([A-Za-z0-9_-]+)/);
+        if (match) resolve(match[1]);
+      });
+      child.on("exit", (code) => {
+        reject(
+          new Error(
+            `OAuth child exited before callback (code ${code}): ${stderr}`
+          )
+        );
+      });
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(
+      child.exitCode,
+      null,
+      "callback listener did not keep the OAuth process alive"
+    );
+    const response = await fetch(
+      `http://127.0.0.1:${port}/callback?code=approved&state=${encodeURIComponent(state)}`
+    );
+    assert.equal(response.status, 200);
+    const exitCode = await new Promise((resolve) =>
+      child.on("close", resolve)
+    );
+    assert.equal(exitCode, 0, stderr);
+  } finally {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
